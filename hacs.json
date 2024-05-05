@@ -1,0 +1,9 @@
+{
+  "name": "KUB",
+  "domains": ["sensor"],
+  "homeassistant": "2023.12.0",
+  "iot_class": "Cloud Polling",
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "kub.zip"
+}
