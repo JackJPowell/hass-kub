@@ -13,7 +13,7 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     HomeAssistantError,
 )
-from kub import KUBAuthenticationError, kubUtility
+from kub import kubUtilities
 
 from .const import DOMAIN
 
@@ -32,9 +32,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     try:
         username = data.get("username")
         password = data.get("password")
-        kub = kubUtility(username, password)
+        kub = kubUtilities.kubUtility(username, password)
         await kub.verify_access()
-    except KUBAuthenticationError as error:
+    except kubUtilities.KUBAuthenticationError as error:
         raise ConfigEntryAuthFailed(error) from error
     except Exception as ex:
         raise ConfigEntryNotReady(ex) from ex
@@ -56,7 +56,7 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """KUB Config Flow."""
-        self.api: kubUtility = None
+        self.api: kubUtilities.kubUtility = None
 
     # @staticmethod
     # @callback
