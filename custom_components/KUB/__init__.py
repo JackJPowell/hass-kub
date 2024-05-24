@@ -9,10 +9,10 @@ from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import discovery
+from kub import KUB
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
 from .coordinator import KUBCoordinator
-from .kub import KUB
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,

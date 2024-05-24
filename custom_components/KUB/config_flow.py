@@ -13,9 +13,9 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     HomeAssistantError,
 )
+from kub import KUB
 
 from .const import DOMAIN
-from .kub import KUB
 
 _LOGGER = logging.getLogger(__name__)
 
