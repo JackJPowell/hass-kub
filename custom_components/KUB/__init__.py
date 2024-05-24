@@ -8,8 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import discovery
-from kub import KUB
+from KUB import KUBAuthenticationError, kubUtility
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
 from .coordinator import KUBCoordinator
@@ -27,9 +26,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         username = entry.data.get("username")
         password = entry.data.get("password")
-        kub = KUB.kubUtility(username, password)
+        kub = kubUtility(username, password)
         await kub.verify_access()
-    except KUB.KUBAuthenticationError as error:
+    except KUBAuthenticationError as error:
         raise ConfigEntryAuthFailed(error) from error
     except Exception as ex:
         raise ConfigEntryNotReady(ex) from ex
