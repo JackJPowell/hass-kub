@@ -8,9 +8,9 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from kub import kubUtilities
 
 from .const import DEVICE_SCAN_INTERVAL, DOMAIN
-from .kub import KUB
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Data update coordinator for KUB."""
 
-    def __init__(self, hass: HomeAssistant, api: KUB.kubUtility) -> None:
+    def __init__(self, hass: HomeAssistant, api: kubUtilities.kubUtility) -> None:
         """Initialize the Coordinator."""
         super().__init__(
             hass,
@@ -47,7 +47,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             self.data["monthly_total"] = await self.api.retrieve_monthly_usage()
             return self.data
-        except KUB.KUBAuthenticationError as error:
+        except kubUtilities.KUBAuthenticationError as error:
             raise ConfigEntryAuthFailed(error) from error
         except Exception as ex:
             raise UpdateFailed(f"Error communicating with the KUB api {ex}") from ex
