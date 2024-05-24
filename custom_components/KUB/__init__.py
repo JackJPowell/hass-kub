@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from KUB import KUBAuthenticationError, kubUtility
+from kub import KUBAuthenticationError, kubUtility
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
 from .coordinator import KUBCoordinator

@@ -13,7 +13,7 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     HomeAssistantError,
 )
-from KUB import KUBAuthenticationError, kubUtility
+from kub import KUBAuthenticationError, kubUtility
 
 from .const import DOMAIN
 
