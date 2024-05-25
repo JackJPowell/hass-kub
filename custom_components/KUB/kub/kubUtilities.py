@@ -67,7 +67,11 @@ class kubUtility:
         self.account_id = ""
         self.account = {}
         self.usage = {"electricity": {}, "gas": {}, "water": {}}
-        self.monthly_total = {"electricity": "", "gas": "", "water": ""}
+        self.monthly_total = {
+            "electricity": {"usage": "", "cost": ""},
+            "gas": {"usage": "", "cost": ""},
+            "water": {"usage": "", "cost": ""},
+        }
         self.http = any
 
     async def retrieve_access_token(self):
@@ -151,6 +155,7 @@ class kubUtility:
         response = await self.http.fetch(url)
         json = await response.json()
         total = 0.0
+        total_cost = 0.0
         date = ""
         usage_data = {}
         for idx, usage in enumerate(json["usage-value"]):
@@ -177,6 +182,7 @@ class kubUtility:
                 self.usage[utility][date][time] = copy.deepcopy(usage_data)
 
                 total = data["readValue"] + total
+                total_cost = data["cost"] + total_cost
                 # print(self.usage)
             else:
                 # This is the aggregate case so create a new blank object in the list
@@ -185,7 +191,8 @@ class kubUtility:
                 )
                 self.usage[utility][date] = {}
 
-        self.monthly_total[utility] = total
+        self.monthly_total[utility]["usage"] = total
+        self.monthly_total[utility]["cost"] = total_cost
         return self.usage
 
     async def retrieve_monthly_usage(self):
