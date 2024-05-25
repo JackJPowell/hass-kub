@@ -39,7 +39,11 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "current_gas": {},
             "current_water": {},
             "current_wastewater": {},
-            "monthly_total": {"electricity": "", "gas": "", "water": ""},
+            "monthly_total": {
+                "electricity": {"usage": "", "cost": ""},
+                "gas": {"usage": "", "cost": ""},
+                "water": {"usage": "", "cost": ""},
+            },
         }
 
     async def _async_update_data(self) -> dict[str, Any]:
