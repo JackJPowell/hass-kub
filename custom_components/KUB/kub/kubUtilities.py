@@ -202,6 +202,29 @@ class kubUtility:
             await self.retrieve_usage(KUBUtilityTypes.GAS)
             await self.retrieve_usage(KUBUtilityTypes.WATER)
         self.http = None
+        return self.usage
+
+    async def retrieve_usage_by_range(
+        self,
+        start_date: str = datetime.today().strftime("%Y-%m-%d"),
+        end_date: str = datetime.today().strftime("%Y-%m-%d"),
+    ):
+        """Retrieve all usage for the current month"""
+        async with Http() as self.http:
+            await self.retrieve_usage(KUBUtilityTypes.ELECTRICITY, start_date, end_date)
+            await self.retrieve_usage(KUBUtilityTypes.GAS, start_date, end_date)
+            await self.retrieve_usage(KUBUtilityTypes.WATER, start_date, end_date)
+        self.http = None
+        return self.usage
+
+    async def retrieve_monthly_summary(self):
+        """Retrieve summary of usage for the current month"""
+        if self.usage is None:
+            async with Http() as self.http:
+                await self.retrieve_usage(KUBUtilityTypes.ELECTRICITY)
+                await self.retrieve_usage(KUBUtilityTypes.GAS)
+                await self.retrieve_usage(KUBUtilityTypes.WATER)
+            self.http = None
         return self.monthly_total
 
     async def get_usage_by_datetime(self, usage_record: datetime = datetime.now()):
