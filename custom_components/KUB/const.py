@@ -2,8 +2,8 @@
 
 from datetime import timedelta
 
-DOMAIN = "KUB"
-DEVICE_SCAN_INTERVAL = timedelta(seconds=3600)
+DOMAIN = "kub"
+DEVICE_SCAN_INTERVAL = timedelta(hours=12)
 KUB_COORDINATOR = "kub_coordinator"
 KUB_API = "kub_api"
 KUB_USER = "kub_user"
