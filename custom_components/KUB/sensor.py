@@ -32,9 +32,10 @@ class KUBSensor(KUBEntity, SensorEntity):
     def __init__(self, coordinator, service) -> None:
         """Initialize KUB Sensor."""
         super().__init__(coordinator)
-        self._attr_unique_id = f"KUB_{service}"
+        self._attr_unique_id = f"kub_{service}_consumption"
         self.key = service
         self._attr_has_entity_name = True
+        self._attr_native_value = 0
 
         match service:
             case "electricity":
@@ -42,21 +43,21 @@ class KUBSensor(KUBEntity, SensorEntity):
                 self._attr_last_reset = None
                 self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
                 self._attr_state_class = "total_increasing"
-                self._attr_name = "Electricity"
+                self._attr_name = "Electricity Consumption"
             case "gas":
                 self._attr_device_class = SensorDeviceClass.GAS
                 self._attr_last_reset = None
                 self._attr_native_unit_of_measurement = UnitOfVolume.CENTUM_CUBIC_FEET
                 self._attr_state_class = "total_increasing"
                 self._attr_suggested_display_precision = 0
-                self._attr_name = "Gas"
+                self._attr_name = "Gas Consumption"
             case "water":
                 self._attr_device_class = SensorDeviceClass.WATER
                 self._attr_last_reset = None
                 self._attr_native_unit_of_measurement = UnitOfVolume.CUBIC_FEET
                 self._attr_state_class = "total_increasing"
                 self._attr_suggested_display_precision = 0
-                self._attr_name = "Water"
+                self._attr_name = "Water Consumption"
 
     @property
     def available(self) -> bool:
@@ -84,7 +85,7 @@ class KUBCostSensor(KUBEntity, SensorEntity):
     def __init__(self, coordinator, service) -> None:
         """Initialize KUB Sensor."""
         super().__init__(coordinator)
-        self._attr_unique_id = f"KUB_{service}_cost"
+        self._attr_unique_id = f"kub_{service}_cost"
         self.key = service
         self._attr_has_entity_name = True
 
