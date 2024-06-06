@@ -35,7 +35,6 @@ class KUBSensor(KUBEntity, SensorEntity):
         self._attr_unique_id = f"kub_{service}_consumption"
         self.key = service
         self._attr_has_entity_name = True
-        self._attr_native_value = 0
 
         match service:
             case "electricity":
@@ -64,19 +63,22 @@ class KUBSensor(KUBEntity, SensorEntity):
         """Return if available."""
         return True
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+    # @callback
+    # def _handle_coordinator_update(self) -> None:
+    #     """Handle updated data from the coordinator."""
 
-        self._attr_native_value = (
-            self.coordinator.data.get("monthly_total").get(self.key).get("usage")
-        )
-        self.async_write_ha_state()
+    #     self._attr_native_value = (
+    #         self.coordinator.data.get("monthly_total").get(self.key).get("usage")
+    #     )
+    #     self.async_write_ha_state()
 
     @property
     def native_value(self) -> StateType:
         """Return native value for entity."""
-        return self.coordinator.data.get("monthly_total").get(self.key).get("usage")
+        value = self.coordinator.data.get("monthly_total").get(self.key).get("usage")
+        if value == "":
+            value = None
+        return value
 
 
 class KUBCostSensor(KUBEntity, SensorEntity):
@@ -116,16 +118,19 @@ class KUBCostSensor(KUBEntity, SensorEntity):
         """Return if available."""
         return True
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+    # @callback
+    # def _handle_coordinator_update(self) -> None:
+    #     """Handle updated data from the coordinator."""
 
-        self._attr_native_value = (
-            self.coordinator.data.get("monthly_total").get(self.key).get("cost")
-        )
-        self.async_write_ha_state()
+    #     self._attr_native_value = (
+    #         self.coordinator.data.get("monthly_total").get(self.key).get("cost")
+    #     )
+    #     self.async_write_ha_state()
 
     @property
     def native_value(self) -> StateType:
         """Return native value for entity."""
-        return self.coordinator.data.get("monthly_total").get(self.key).get("cost")
+        value = self.coordinator.data.get("monthly_total").get(self.key).get("cost")
+        if value == "":
+            value = None
+        return value
