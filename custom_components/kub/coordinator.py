@@ -13,9 +13,9 @@ from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from kub import kubUtilities
 
 from .const import DEVICE_SCAN_INTERVAL, DOMAIN
+from .kub import kubUtilities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Get the latest data from KUB."""
         try:
-            self.data["usage"] = await self.api.retrieve_monthly_usage()
+            self.data["usage"] = await self.api.retrieve_last_31_days()
             self.data["monthly_total"] = self.api.monthly_total
             # Because KUB provides historical usage/cost with a delay of approximately one day
             # we need to insert data into statistics.
