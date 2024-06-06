@@ -8,10 +8,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from kub import kubUtilities
+from homeassistant.helpers.start import async_at_started
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
 from .coordinator import KUBCoordinator
+from .kub import kubUtilities
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -27,7 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username = entry.data.get("username")
         password = entry.data.get("password")
         kub = kubUtilities.kubUtility(username, password)
-        await kub.verify_access()
+        await kub.retrieve_account_info()
     except kubUtilities.KUBAuthenticationError as error:
         raise ConfigEntryAuthFailed(error) from error
     except Exception as ex:
@@ -43,10 +44,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         KUB_API: kub,
     }
 
-    await coordinator.async_config_entry_first_refresh()
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(update_listener))
+    async def _async_finish_startup(hass: HomeAssistant) -> None:
+        """Run this only when HA has finished its startup."""
+        await coordinator.async_config_entry_first_refresh()
 
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_at_started(hass, _async_finish_startup)
     return True
 
 
