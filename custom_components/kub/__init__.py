@@ -12,7 +12,7 @@ from homeassistant.helpers.start import async_at_started
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
 from .coordinator import KUBCoordinator
-from .kub import kubUtilities
+from .kub import kub_utilities
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -27,9 +27,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         username = entry.data.get("username")
         password = entry.data.get("password")
-        kub = kubUtilities.kubUtility(username, password)
+        kub = kub_utilities.KubUtility(username, password)
         await kub.retrieve_account_info()
-    except kubUtilities.KUBAuthenticationError as error:
+    except kub_utilities.KUBAuthenticationError as error:
         raise ConfigEntryAuthFailed(error) from error
     except Exception as ex:
         raise ConfigEntryNotReady(ex) from ex
