@@ -5,17 +5,17 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlow
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry, ConfigFlow
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
     HomeAssistantError,
 )
-from kub import kubUtilities
 
-from .const import DOMAIN
+from .const import CONF_WATER_STATISTICS, DOMAIN
+from .kub import kub_utilities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
@@ -32,9 +32,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     try:
         username = data.get("username")
         password = data.get("password")
-        kub = kubUtilities.kubUtility(username, password)
+        kub = kub_utilities.KubUtility(username, password)
         await kub.verify_access()
-    except kubUtilities.KUBAuthenticationError as error:
+    except kub_utilities.KUBAuthenticationError as error:
         raise ConfigEntryAuthFailed(error) from error
     except Exception as ex:
         raise ConfigEntryNotReady(ex) from ex
@@ -56,13 +56,13 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """KUB Config Flow."""
-        self.api: kubUtilities.kubUtility = None
+        self.api: kub_utilities.KubUtility = None
 
-    # @staticmethod
-    # @callback
-    # def async_get_options_flow(config_entry: ConfigEntry) -> KUBOptionsFlowHandler:
-    #     """Get the options flow for this handler."""
-    #     return KUBOptionsFlowHandler(config_entry)
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry):
+        """Get the options flow for this handler."""
+        return KUBOptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -75,7 +75,7 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         try:
-            info = await validate_input(self.hass, user_input)
+            info = await validate_input(user_input)
         except CannotConnect:
             errors["base"] = "cannot_connect"
         except InvalidAuth:
@@ -98,6 +98,44 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured(
             updates={},
         )
+
+
+class KUBOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle Unfolded Circle Remote options."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+        self.options = dict(config_entry.options)
+
+    async def async_step_init(self, user_input=None):  # pylint: disable=unused-argument
+        """Manage the options."""
+        return await self.async_step_options()
+
+    async def async_step_options(self, user_input=None):
+        """Handle options step two flow initialized by the user."""
+        if user_input is not None:
+            self.options.update(user_input)
+            return await self._update_options()
+
+        return self.async_show_form(
+            step_id="options",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_WATER_STATISTICS,
+                        default=self.config_entry.options.get(
+                            CONF_WATER_STATISTICS, False
+                        ),
+                    ): bool,
+                }
+            ),
+            last_step=True,
+        )
+
+    async def _update_options(self):
+        """Update config entry options."""
+        return self.async_create_entry(title="", data=self.options)
 
 
 class CannotConnect(HomeAssistantError):
