@@ -6,9 +6,9 @@
   <img alt="Knoxville Utilities Board Logo" src="https://brands.home-assistant.io/kub/logo.png">
 </picture>
 
-## Knoxville Utility Board for Home Assistant
+## Knoxville Utilities Board for Home Assistant
 
-Home Assistant integration for the [Knoxville Utility Board](https://www.kub.org/).
+Home Assistant integration for the [Knoxville Utilities Board](https://www.kub.org/).
 
 ## Installation
 
@@ -27,7 +27,7 @@ There are two main ways to install this custom component within your Home Assist
 
 2. Manual Installation:
    1. Download or clone this repository
-   2. Copy the contents of the folder **custom_components/KUB** into the same file structure on your Home Assistant instance
+   2. Copy the contents of the folder **custom_components/kub** into the same file structure on your Home Assistant instance
    3. Restart your Home Assistant instance and then proceed to the _Configuration_ section below.
 
 While the manual installation above seems like less steps, it's important to note that you will not be able to see updates to this custom component unless you are subscribed to the watch list. You will then have to repeat each step in the process. By using HACS, you'll be able to see that an update is available and easily update the custom component. Trust me, HACS is the worth the small upfront investment to get it setup.
@@ -58,6 +58,10 @@ KUB only updates their api data once a day so this integration is set to only po
 ## Options
 
 Under the configure menu, you will find a single option to combine waste water usage and cost data into the water statistics. This is directed at those of us who only have a single point of water service and waste water is calculated via water consumption. This allows the statistics to better represent the total water cost for your residence. Even with this option enabled you will still have unique water and waste water summary sensors.
+
+## Considerations
+
+In an effort to improve startup times, you may notice upon restart that your KUB sensors are listed as _Unknown_. This is expected as usage/cost data retrieval has been delayed until after Home Assistant startup has completed. This delay significantly improves start times for the KUB integration.
 
 ## Your Support
 
