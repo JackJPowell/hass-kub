@@ -57,7 +57,7 @@ class Http:
         return resp
 
 
-class kubUtility:
+class KubUtility:
     """KUB utilities api"""
 
     def __init__(self, username, password):
@@ -67,12 +67,13 @@ class kubUtility:
         self.account_id = ""
 
         self.account = {}
-        self.sessionStart = ""
-        self.usage = {"electricity": {}, "gas": {}, "water": {}}
+        self.session_start = ""
+        self.usage = {"electricity": {}, "gas": {}, "water": {}, "wastewater": {}}
         self.monthly_total = {
-            "electricity": {"usage": "", "cost": ""},
-            "gas": {"usage": "", "cost": ""},
-            "water": {"usage": "", "cost": ""},
+            "electricity": {"usage": None, "cost": None},
+            "gas": {"usage": None, "cost": None},
+            "water": {"usage": None, "cost": None},
+            "wastewater": {"usage": None, "cost": None},
         }
         self.services = {}
         self.service_list = []
@@ -80,6 +81,7 @@ class kubUtility:
 
     @property
     def is_session_active(self):
+        """Getter that returns if session was created within 15m"""
         if datetime.now() < datetime.now() - timedelta(minutes=15):
             return True
         return False
@@ -98,7 +100,7 @@ class kubUtility:
         response = await self.http.post(url, payload)
         if response.status == 401:
             raise KUBAuthenticationError
-        self.sessionStart = datetime.now()
+        self.session_start = datetime.now()
 
     async def _retrieve_account_info(self):
         """Retrieve Account Info"""
@@ -131,17 +133,21 @@ class kubUtility:
                     self.service_list.append(KUBUtilityTypes.GAS)
                 case "W/S-RES":
                     self.account["water"] = service["id"]
+                    self.account["wastewater"] = service["id"]
                     self.service_list.append(KUBUtilityTypes.WATER)
+                    self.service_list.append(KUBUtilityTypes.WASTEWATER)
                 case _:
                     raise Exception("An unexpected service ID:", service["id"])
         return self.services
 
     async def retrieve_account_info(self):
+        """Retrieves account info from KUB api"""
         async with Http() as self.http:
             await self._retrieve_access_token()
             await self._retrieve_account_info()
 
     async def retrieve_access_token(self):
+        """Fetches access token"""
         async with Http() as self.http:
             await self._retrieve_access_token()
 
@@ -153,6 +159,17 @@ class kubUtility:
     ):
         utility = utility_type.name.lower()
         account = self.account[utility]
+
+        # If we are processing wastewater so just copy water
+        # This does not account for separate meters for water and wastewater
+        # However, I do not know what the response looks like to process
+        # this case properly
+        if utility_type == KUBUtilityTypes.WASTEWATER:
+            water = KUBUtilityTypes.WATER.name.lower()
+            self.usage[utility] = copy.deepcopy(self.usage[water])
+            self.monthly_total[utility]["usage"] = self.monthly_total[water]["usage"]
+            self.monthly_total[utility]["cost"] = self.monthly_total[water]["cost"]
+            return self.usage
 
         url = (
             "https://www.kub.org/api/ami/v1/usage-values"
@@ -235,10 +252,11 @@ class kubUtility:
         date = datetime.today().replace(day=1).date().strftime("%Y-%m-%d")
         start_date = date.strftime("%Y-%m-%d")
 
-        if len(self.person_id) == 0:
-            await self._retrieve_account_info()
-
         async with Http() as self.http:
+            await self._retrieve_access_token()
+
+            if len(self.person_id) == 0:
+                await self._retrieve_account_info()
             for service in self.service_list:
                 await self._retrieve_usage(service, start_date=start_date)
         self.http = None
@@ -251,6 +269,10 @@ class kubUtility:
     ):
         """Retrieve all usage for the current month"""
         async with Http() as self.http:
+            await self._retrieve_access_token()
+
+            if len(self.person_id) == 0:
+                await self._retrieve_account_info()
             for service in self.service_list:
                 await self._retrieve_usage(
                     service, start_date=start_date, end_date=end_date
@@ -263,10 +285,11 @@ class kubUtility:
 
         start_date = datetime.today().replace(day=1).date().strftime("%Y-%m-%d")
 
-        if len(self.person_id) == 0:
-            await self._retrieve_account_info()
-
         async with Http() as self.http:
+            await self._retrieve_access_token()
+
+            if len(self.person_id) == 0:
+                await self._retrieve_account_info()
             for service in self.service_list:
                 await self._retrieve_usage(service, start_date=start_date)
         self.http = None
@@ -294,13 +317,14 @@ class kubUtility:
 
     async def get_available_services(self):
         """Returns available services for account"""
-        if self.account is None:
-            async with Http() as self.http:
-                await self._retrieve_services()
-        return self.account
+        async with Http() as self.http:
+            await self._retrieve_access_token()
+
+            if len(self.person_id) == 0:
+                await self._retrieve_account_info()
+        return self.services
 
     async def verify_access(self):
         """Verify username and password is able to retreive api token"""
         async with Http() as self.http:
             await self._retrieve_access_token()
-        return self.account
