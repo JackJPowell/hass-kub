@@ -24,5 +24,16 @@
         "title": "KUB Account"
       }
     }
+  },
+  "options": {
+    "step": {
+      "options": {
+        "title": "KUB Options",
+        "description": "Statistic Data",
+        "data": {
+          "water_statistics": "Include Waste Water in Water Statistics"
+        }
+      }
+    }
   }
 }
