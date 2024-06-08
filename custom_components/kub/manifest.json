@@ -8,7 +8,7 @@
   "homekit": {},
   "integration_type": "device",
   "iot_class": "cloud_polling",
-  "requirements": ["kub==0.2.1"],
+  "requirements": ["kub==0.5.0"],
   "ssdp": [],
-  "version": "0.2.0"
+  "version": "0.5.0"
 }
