@@ -4,7 +4,7 @@ import logging
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import UnitOfEnergy, UnitOfVolume
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import StateType
 
 from .const import DOMAIN, KUB_COORDINATOR
@@ -57,20 +57,18 @@ class KUBSensor(KUBEntity, SensorEntity):
                 self._attr_state_class = "total_increasing"
                 self._attr_suggested_display_precision = 0
                 self._attr_name = "Water Consumption"
+            case "wastewater":
+                self._attr_device_class = SensorDeviceClass.WATER
+                self._attr_last_reset = None
+                self._attr_native_unit_of_measurement = UnitOfVolume.CUBIC_FEET
+                self._attr_state_class = "total_increasing"
+                self._attr_suggested_display_precision = 0
+                self._attr_name = "Waste Water Consumption"
 
     @property
     def available(self) -> bool:
         """Return if available."""
         return True
-
-    # @callback
-    # def _handle_coordinator_update(self) -> None:
-    #     """Handle updated data from the coordinator."""
-
-    #     self._attr_native_value = (
-    #         self.coordinator.data.get("monthly_total").get(self.key).get("usage")
-    #     )
-    #     self.async_write_ha_state()
 
     @property
     def native_value(self) -> StateType:
@@ -112,20 +110,18 @@ class KUBCostSensor(KUBEntity, SensorEntity):
                 self._attr_state_class = "total"
                 self._attr_suggested_display_precision = 0
                 self._attr_name = "Water Cost"
+            case "wastewater":
+                self._attr_device_class = SensorDeviceClass.MONETARY
+                self._attr_last_reset = None
+                self._attr_native_unit_of_measurement = "USD"
+                self._attr_state_class = "total"
+                self._attr_suggested_display_precision = 0
+                self._attr_name = "Waste Water Cost"
 
     @property
     def available(self) -> bool:
         """Return if available."""
         return True
-
-    # @callback
-    # def _handle_coordinator_update(self) -> None:
-    #     """Handle updated data from the coordinator."""
-
-    #     self._attr_native_value = (
-    #         self.coordinator.data.get("monthly_total").get(self.key).get("cost")
-    #     )
-    #     self.async_write_ha_state()
 
     @property
     def native_value(self) -> StateType:

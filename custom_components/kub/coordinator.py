@@ -7,6 +7,7 @@ import logging
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from homeassistant import config_entries
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.const import UnitOfEnergy, UnitOfVolume
@@ -14,8 +15,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEVICE_SCAN_INTERVAL, DOMAIN
-from .kub import kubUtilities
+from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
+from .kub import kub_utilities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Data update coordinator for KUB."""
 
-    def __init__(self, hass: HomeAssistant, api: kubUtilities.kubUtility) -> None:
+    def __init__(self, hass: HomeAssistant, api: kub_utilities.kubUtility) -> None:
         """Initialize the Coordinator."""
         super().__init__(
             hass,
@@ -33,6 +34,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         self.hass = hass
+        self.config_entry = config_entries.current_entry.get()
         self.entities = []
         self.api = api
         self.username = api.username
@@ -44,10 +46,13 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "current_gas": {},
             "current_water": {},
             "current_wastewater": {},
+            "services": {},
+            "service_list": [],
             "monthly_total": {
-                "electricity": {"usage": "", "cost": ""},
-                "gas": {"usage": "", "cost": ""},
-                "water": {"usage": "", "cost": ""},
+                "electricity": {"usage": None, "cost": None},
+                "gas": {"usage": None, "cost": None},
+                "water": {"usage": None, "cost": None},
+                "wastewater": {"usage": None, "cost": None},
             },
         }
 
@@ -56,11 +61,13 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             self.data["usage"] = await self.api.retrieve_last_31_days()
             self.data["monthly_total"] = self.api.monthly_total
+            self.data["services"] = self.api.services
+            self.data["service_list"] = self.api.service_list
             # Because KUB provides historical usage/cost with a delay of approximately one day
             # we need to insert data into statistics.
             await self._insert_statistics()
             return self.data
-        except kubUtilities.KUBAuthenticationError as error:
+        except kub_utilities.KUBAuthenticationError as error:
             raise ConfigEntryAuthFailed(error) from error
         except Exception as ex:
             raise UpdateFailed(f"Error communicating with the KUB api {ex}") from ex
@@ -69,8 +76,6 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Insert KUB statistics."""
         for utility in self.data["usage"]:
             utility_data = self.data["usage"][utility]
-            # cost_statistic_id = f"{DOMAIN}:{utility}_cost"
-            # consumption_statistic_id = f"{DOMAIN}:{utility}_consumption"
             cost_statistic_id = f"sensor.kub_{utility}_cost"
             consumption_statistic_id = f"sensor.kub_{utility}_consumption"
             _LOGGER.debug(
@@ -88,6 +93,11 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             for date in cost_reads:
                 day = cost_reads[date]
+                # Skip loading statistics that don't have a full days worth of data
+                # We will populate this day on the next pass
+                # HA displays errors in utility usage if partial day stats are added
+                if len(day) < 20:
+                    continue
                 for time in day:
                     hour = day[time]
                     timestamp = hour.get("readDateTime")
@@ -99,6 +109,20 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         and start.timestamp() <= last_stats_time
                     ):
                         continue
+
+                    # If we are processing water and user has selected to include
+                    # waste water, double count usage as KUB does. This is not
+                    # sufficient for residences with separate waste water meters.
+                    # Please help if this is you!
+                    if (
+                        utility.lower()
+                        == kub_utilities.KUBUtilityTypes.WATER.name.lower()
+                        and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
+                        is True
+                    ):
+                        cost_sum += hour.get("cost")
+                        consumption_sum += hour.get("utilityUsed")
+
                     cost_sum += hour.get("cost")
                     consumption_sum += hour.get("utilityUsed")
 
@@ -123,9 +147,12 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 unit_of_measurement="USD",
             )
 
-            if utility.lower() == kubUtilities.KUBUtilityTypes.ELECTRICITY.name.lower():
+            if (
+                utility.lower()
+                == kub_utilities.KUBUtilityTypes.ELECTRICITY.name.lower()
+            ):
                 unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-            elif utility.lower() == kubUtilities.KUBUtilityTypes.GAS.name.lower():
+            elif utility.lower() == kub_utilities.KUBUtilityTypes.GAS.name.lower():
                 unit_of_measurement = UnitOfVolume.CENTUM_CUBIC_FEET
             else:
                 unit_of_measurement = UnitOfVolume.CUBIC_FEET
