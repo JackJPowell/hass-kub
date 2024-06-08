@@ -14,9 +14,9 @@ from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
-from .kub import kub_utilities
 
 _LOGGER = logging.getLogger(__name__)
 

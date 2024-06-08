@@ -13,9 +13,9 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     HomeAssistantError,
 )
+from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DOMAIN
-from .kub import kub_utilities
 
 _LOGGER = logging.getLogger(__name__)
 
