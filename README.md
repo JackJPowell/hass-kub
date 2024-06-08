@@ -2,8 +2,8 @@
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/jackjpowell/hass-kub/total)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="">
-  <img alt="Playstation Network logo" src="">
+  <source media="(prefers-color-scheme: dark)" srcset="https://brands.home-assistant.io/kub/logo.png">
+  <img alt="Knoxville Utilities Board Logo" src="https://brands.home-assistant.io/kub/logo.png">
 </picture>
 
 ## Knoxville Utility Board for Home Assistant
@@ -45,7 +45,7 @@ There is a config flow for this integration. After installing the custom compone
 
 ## Usage
 
-After the device is configured, the integration will expose 1 to 4 entities:
+After the device is configured, the integration will expose 1 to 4 entities depending on the services available within your account:
 
 - Sensors
   - Electricity
@@ -53,9 +53,19 @@ After the device is configured, the integration will expose 1 to 4 entities:
   - Water
   - Waste Water
 
+KUB only updates their api data once a day so this integration is set to only poll once every 12 hours. However, once new data is retrieved, hourly statistics will also be back-loaded to be displayed on your energy dashboard.
+
+## Options
+
+Under the configure menu, you will find a single option to combine waste water usage and cost data into the water statistics. This is directed at those of us who only have a single point of water service and waste water is calculated via water consumption. This allows the statistics to better represent the total water cost for your residence. Even with this option enabled you will still have unique water and waste water summary sensors.
+
+## Your Support
+
+As alluded to above, I only have a single line of water service and because of this I'm not able to determine what the api response looks like for those of you with multiple lines. This is most commonly seen when a residence has a pool or a large irrigation system. If this is you, could I ask a favor? On the KUB Devices screen there is a _visit_ link and to the right an overflow menu. If you select it, you will see an option to download diagnostics data. Select it and the browser will save a diagnostics json file. Next go to [my repo](https://github.com/JackJPowell/hass-kub) and create a new issue or discussion and provide that file to me. You can also email it my way as well. Thank you!
+
 ## Future Ideas
 
-- [ ] Future fun
+- [ ] Support multiple water lines
 
 ## Notes
 
