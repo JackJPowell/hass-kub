@@ -1,5 +1,6 @@
 ![GitHub Release](https://img.shields.io/github/v/release/jackjpowell/hass-kub)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/jackjpowell/hass-kub/total)
+<a href="#"><img src="https://img.shields.io/maintenance/yes/2024.svg"></a>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://brands.home-assistant.io/kub/logo.png">
