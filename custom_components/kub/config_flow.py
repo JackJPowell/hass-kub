@@ -8,11 +8,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import (
-    ConfigEntryAuthFailed,
-    ConfigEntryNotReady,
-    HomeAssistantError,
-)
+from homeassistant.exceptions import HomeAssistantError
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DOMAIN
@@ -29,15 +25,15 @@ async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
+    username = data.get("username")
+    password = data.get("password")
     try:
-        username = data.get("username")
-        password = data.get("password")
         kub = kub_utilities.KubUtility(username, password)
         await kub.verify_access()
     except kub_utilities.KUBAuthenticationError as error:
-        raise ConfigEntryAuthFailed(error) from error
+        raise InvalidAuth(error) from error
     except Exception as ex:
-        raise ConfigEntryNotReady(ex) from ex
+        raise CannotConnect(ex) from ex
 
     # Return info that you want to store in the config entry.
     return {
@@ -52,7 +48,6 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for KUB."""
 
     VERSION = 1
-    CONNECTION_CLASS = config_entries.CONN_CLASS_CLOUD_POLL
 
     def __init__(self) -> None:
         """KUB Config Flow."""
@@ -76,9 +71,11 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
 
         try:
             info = await validate_input(user_input)
-        except CannotConnect:
+        except CannotConnect as ex:
+            _LOGGER.exception("Cannot connect to KUB: %s", ex)
             errors["base"] = "cannot_connect"
-        except InvalidAuth:
+        except InvalidAuth as ex:
+            _LOGGER.exception("Invalid authentication for KUB: %s", ex)
             errors["base"] = "invalid_auth"
         except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("Unexpected exception")
@@ -88,6 +85,45 @@ class KUBConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
+
+    async def async_step_reauth(
+        self, _user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle re-authentication."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle re-authentication confirmation."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                info = await validate_input(user_input)
+            except CannotConnect as ex:
+                _LOGGER.exception("Cannot connect to KUB: %s", ex)
+                errors["base"] = "cannot_connect"
+            except InvalidAuth as ex:
+                _LOGGER.exception("Invalid authentication for KUB: %s", ex)
+                errors["base"] = "invalid_auth"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception during reauth")
+                errors["base"] = "unknown"
+            else:
+                self.hass.config_entries.async_update_entry(
+                    self._get_reauth_entry(),
+                    data=info,
+                )
+                await self.hass.config_entries.async_reload(
+                    self._get_reauth_entry().entry_id
+                )
+                return self.async_abort(reason="reauth_successful")
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
         )
 
     async def _async_set_unique_id_and_abort_if_already_configured(
@@ -105,7 +141,6 @@ class KUBOptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
         self.options = dict(config_entry.options)
 
     async def async_step_init(self, user_input=None):  # pylint: disable=unused-argument

@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers.start import async_at_started
 from kub import kub_utilities
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
@@ -44,12 +43,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         KUB_API: kub,
     }
 
-    async def _async_finish_startup(hass: HomeAssistant) -> None:
-        """Run this only when HA has finished its startup."""
-        await coordinator.async_config_entry_first_refresh()
-
+    await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    async_at_started(hass, _async_finish_startup)
     return True
 
 

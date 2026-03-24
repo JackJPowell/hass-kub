@@ -24,7 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Data update coordinator for KUB."""
 
-    def __init__(self, hass: HomeAssistant, api: kub_utilities.kubUtility) -> None:
+    def __init__(self, hass: HomeAssistant, api: kub_utilities.KubUtility) -> None:
         """Initialize the Coordinator."""
         super().__init__(
             hass,
