@@ -143,7 +143,8 @@ class KubUtility:
         # These are forwarded on all API requests instead of a Bearer header.
         self._session_cookies: dict[str, str] = {}
 
-        self.usage = {"electricity": {}, "gas": {}, "water": {}, "wastewater": {}}
+        self.usage = {"electricity": {}, "gas": {},
+                      "water": {}, "wastewater": {}}
         self.monthly_total = {
             "electricity": {"usage": None, "cost": None},
             "gas": {"usage": None, "cost": None},
@@ -218,7 +219,8 @@ class KubUtility:
                     first = sc.split(";")[0].strip()
                     eq = first.find("=")
                     if eq != -1:
-                        session_cookies[first[:eq].strip()] = first[eq + 1:].strip()
+                        session_cookies[first[:eq].strip()
+                                        ] = first[eq + 1:].strip()
 
             # Extract CSRF token and transaction ID from the page
             csrf_match = re.search(r'"csrf"\s*:\s*"([^"]+)"', html)
@@ -262,7 +264,8 @@ class KubUtility:
                     first = sc.split(";")[0].strip()
                     eq = first.find("=")
                     if eq != -1:
-                        session_cookies[first[:eq].strip()] = first[eq + 1:].strip()
+                        session_cookies[first[:eq].strip()
+                                        ] = first[eq + 1:].strip()
                 sa_text = await sa_resp.text()
                 if not sa_text or not sa_text.strip():
                     raise KUBAuthenticationError(
@@ -309,7 +312,8 @@ class KubUtility:
             qs = parse_qs(parsed.query)
             auth_code = qs.get("code", [None])[0]
             if not auth_code:
-                error = qs.get("error_description", qs.get("error", ["Unknown"]))[0]
+                error = qs.get("error_description",
+                               qs.get("error", ["Unknown"]))[0]
                 raise KUBAuthenticationError(
                     f"Auth code not found in redirect. Error: {error}"
                 )
@@ -352,7 +356,8 @@ class KubUtility:
                             )
                         token_json = await fb_resp.json()
                     # Store as Bearer token (fallback mode — may not work for AMI)
-                    self._access_token = token_json.get("id_token") or token_json["access_token"]
+                    self._access_token = token_json.get(
+                        "id_token") or token_json["access_token"]
                     self._refresh_token = token_json.get("refresh_token", "")
                     self._session_cookies = {}
                     # Fall through to the expires_in block below
@@ -365,22 +370,27 @@ class KubUtility:
                         first = sc.split(";")[0].strip()
                         eq = first.find("=")
                         if eq != -1:
-                            proxy_cookies[first[:eq].strip()] = first[eq + 1:].strip()
+                            proxy_cookies[first[:eq].strip(
+                            )] = first[eq + 1:].strip()
 
                     token_json = await token_resp.json()
 
                     if proxy_cookies:
                         # Primary path: use proxy-issued cookies for all API calls
                         self._session_cookies = proxy_cookies
-                        self._access_token = token_json.get("id_token", "") if token_json else ""
+                        self._access_token = token_json.get(
+                            "id_token", "") if token_json else ""
                         self._refresh_token = ""  # refresh handled by proxy via cookies
                     else:
                         # Proxy returned JSON but no cookies — store token as Bearer
-                        self._access_token = (token_json or {}).get("id_token") or (token_json or {}).get("access_token", "")
-                        self._refresh_token = (token_json or {}).get("refresh_token", "")
+                        self._access_token = (token_json or {}).get("id_token") or (
+                            token_json or {}).get("access_token", "")
+                        self._refresh_token = (token_json or {}).get(
+                            "refresh_token", "")
                         self._session_cookies = {}
 
-                    expires_in = int((token_json or {}).get("expires_in", 3600)) if token_json else 3600
+                    expires_in = int((token_json or {}).get(
+                        "expires_in", 3600)) if token_json else 3600
                     self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
                     self.session_start = datetime.now()
 
@@ -390,7 +400,8 @@ class KubUtility:
                         self.http.access_token = self._access_token
                     return
 
-        expires_in = int(token_json.get("expires_in", 3600)) if token_json else 3600
+        expires_in = int(token_json.get("expires_in", 3600)
+                         ) if token_json else 3600
         self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
         self.session_start = datetime.now()
 
@@ -404,7 +415,8 @@ class KubUtility:
         if self._session_cookies:
             # Cookie-based refresh: send existing cookies (which contain the
             # httpOnly refresh_token). The proxy returns new cookies + JSON.
-            cookie_header = "; ".join(f"{k}={v}" for k, v in self._session_cookies.items())
+            cookie_header = "; ".join(
+                f"{k}={v}" for k, v in self._session_cookies.items())
             token_data = {
                 "client_id": _CLIENT_ID,
                 "grant_type": "refresh_token",
@@ -432,12 +444,14 @@ class KubUtility:
                         first = sc.split(";")[0].strip()
                         eq = first.find("=")
                         if eq != -1:
-                            new_cookies[first[:eq].strip()] = first[eq + 1:].strip()
+                            new_cookies[first[:eq].strip(
+                            )] = first[eq + 1:].strip()
                     token_json = await token_resp.json()
 
             if new_cookies:
                 self._session_cookies.update(new_cookies)
-            expires_in = int((token_json or {}).get("expires_in", 3600)) if token_json else 3600
+            expires_in = int((token_json or {}).get(
+                "expires_in", 3600)) if token_json else 3600
             self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
             if self.http is not None:
                 self.http.session_cookies = self._session_cookies
@@ -464,8 +478,10 @@ class KubUtility:
                     return
                 token_json = await token_resp.json()
 
-        self._access_token = token_json.get("id_token") or token_json["access_token"]
-        self._refresh_token = token_json.get("refresh_token", self._refresh_token)
+        self._access_token = token_json.get(
+            "id_token") or token_json["access_token"]
+        self._refresh_token = token_json.get(
+            "refresh_token", self._refresh_token)
         expires_in = int(token_json.get("expires_in", 3600))
         self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
@@ -668,7 +684,8 @@ class KubUtility:
         await self.retrieve_monthly_usage()
         date_key = usage_record.replace(day=1).strftime("%Y-%m-%d")
         hour_key = usage_record.strftime("%H:00:00")
-        elec = (self.usage.get("electricity") or {}).get(date_key, {}).get(hour_key)
+        elec = (self.usage.get("electricity") or {}).get(
+            date_key, {}).get(hour_key)
         gas = (self.usage.get("gas") or {}).get(date_key, {}).get(hour_key)
         water = (self.usage.get("water") or {}).get(date_key, {}).get(hour_key)
         return elec, gas, water

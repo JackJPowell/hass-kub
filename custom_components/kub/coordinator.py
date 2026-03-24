@@ -8,12 +8,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant import config_entries
-from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-from homeassistant.components.recorder.statistics import async_import_statistics
+from homeassistant.components.recorder.models import (StatisticData,
+                                                      StatisticMetaData)
+from homeassistant.components.recorder.statistics import \
+    async_import_statistics
 from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
+                                                      UpdateFailed)
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
@@ -70,7 +73,8 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except kub_utilities.KUBAuthenticationError as error:
             raise ConfigEntryAuthFailed(error) from error
         except Exception as ex:
-            raise UpdateFailed(f"Error communicating with the KUB api {ex}") from ex
+            raise UpdateFailed(
+                f"Error communicating with the KUB api {ex}") from ex
 
     async def _insert_statistics(self) -> None:
         """Insert KUB statistics."""
@@ -127,7 +131,8 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     consumption_sum += hour.get("utilityUsed")
 
                     cost_statistics.append(
-                        StatisticData(start=start, state=hour.get("cost"), sum=cost_sum)
+                        StatisticData(start=start, state=hour.get(
+                            "cost"), sum=cost_sum)
                     )
                     consumption_statistics.append(
                         StatisticData(
