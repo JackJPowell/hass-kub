@@ -151,6 +151,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 source="recorder",
                 statistic_id=cost_statistic_id,
                 unit_of_measurement="USD",
+                unit_class=None,
             )
 
             if (
@@ -158,10 +159,13 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 == kub_utilities.KUBUtilityTypes.ELECTRICITY.name.lower()
             ):
                 unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+                unit_class = "energy"
             elif utility.lower() == kub_utilities.KUBUtilityTypes.GAS.name.lower():
                 unit_of_measurement = UnitOfVolume.CENTUM_CUBIC_FEET
+                unit_class = "volume"
             else:
                 unit_of_measurement = UnitOfVolume.CUBIC_FEET
+                unit_class = "volume"
 
             consumption_metadata = StatisticMetaData(
                 mean_type=StatisticMeanType.NONE,
@@ -170,6 +174,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 source="recorder",
                 statistic_id=consumption_statistic_id,
                 unit_of_measurement=unit_of_measurement,
+                unit_class=unit_class,
             )
 
             async_import_statistics(self.hass, cost_metadata, cost_statistics)
