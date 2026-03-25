@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from homeassistant import config_entries
 from homeassistant.components.recorder.models import (StatisticData,
+                                                      StatisticMeanType,
                                                       StatisticMetaData)
 from homeassistant.components.recorder.statistics import \
     async_import_statistics
@@ -144,7 +145,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             name_prefix = f"KUB {utility.capitalize()}"
             cost_metadata = StatisticMetaData(
-                has_mean=False,
+                mean_type=StatisticMeanType.NONE,
                 has_sum=True,
                 name=f"{name_prefix} Cost",
                 source="recorder",
@@ -163,7 +164,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 unit_of_measurement = UnitOfVolume.CUBIC_FEET
 
             consumption_metadata = StatisticMetaData(
-                has_mean=False,
+                mean_type=StatisticMeanType.NONE,
                 has_sum=True,
                 name=f"{name_prefix} Consumption",
                 source="recorder",
