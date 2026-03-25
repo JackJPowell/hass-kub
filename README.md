@@ -1,6 +1,6 @@
 ![GitHub Release](https://img.shields.io/github/v/release/jackjpowell/hass-kub)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/jackjpowell/hass-kub/total)
-<a href="#"><img src="https://img.shields.io/maintenance/yes/2025.svg"></a>
+<a href="#"><img src="https://img.shields.io/maintenance/yes/2026.svg"></a>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://brands.home-assistant.io/kub/logo.png">
@@ -20,7 +20,7 @@ There are two main ways to install this custom component within your Home Assist
     [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=JackJPowell&repository=hass-kub&category=Integration)
 
    Or
-   
+
    1. From within Home Assistant, click on the link to **HACS**
    2. Click on **Integrations**
    3. Click on the vertical ellipsis in the top right and select **Custom repositories**
