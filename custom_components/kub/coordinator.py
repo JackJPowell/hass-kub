@@ -1,4 +1,4 @@
-"""The IntelliFire integration."""
+"""The hass-kub integration coordinator"""
 
 from __future__ import annotations
 
@@ -8,11 +8,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant import config_entries
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import (StatisticData,
                                                       StatisticMeanType,
                                                       StatisticMetaData)
-from homeassistant.components.recorder.statistics import \
-    async_import_statistics
+from homeassistant.components.recorder.statistics import (
+    async_import_statistics,
+    get_last_statistics,
+)
 from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -23,6 +26,8 @@ from kub import kub_utilities
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+_TZ_LOCAL = ZoneInfo("America/New_York")
 
 
 class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -77,8 +82,35 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(
                 f"Error communicating with the KUB api {ex}") from ex
 
+    async def _get_last_stat_sum_and_time(
+        self, statistic_id: str
+    ) -> tuple[float, float]:
+        """Return (last_sum, last_start_timestamp) for a statistic, or (0.0, 0) if none."""
+        stats = await get_instance(self.hass).async_add_executor_job(
+            get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
+        )
+        records = stats.get(statistic_id)
+        if not records:
+            return 0.0, 0
+        record = records[0]
+        last_sum = record.get("sum") or 0.0
+        start = record.get("start")
+        if start is None:
+            last_ts = 0
+        elif hasattr(start, "timestamp"):
+            last_ts = start.timestamp()
+        else:
+            last_ts = float(start)
+        return last_sum, last_ts
+
     async def _insert_statistics(self) -> None:
-        """Insert KUB statistics."""
+        """Insert KUB statistics.
+
+        Fetches the last recorded sum for each statistic before accumulating
+        new data so that the running total is truly monotonically increasing
+        across billing-period boundaries.  Only data points newer than the
+        most recently stored statistic are appended.
+        """
         for utility in self.data["usage"]:
             utility_data = self.data["usage"][utility]
             cost_statistic_id = f"sensor.kub_{utility}_cost"
@@ -90,30 +122,35 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             cost_reads = utility_data
-            cost_sum = 0.0
-            consumption_sum = 0.0
-            last_stats_time = None
             cost_statistics = []
             consumption_statistics = []
 
-            for date in cost_reads:
+            # Seed running totals from the last recorded statistics so that
+            # the cumulative sum never resets to zero at a billing-period
+            # boundary.  last_stats_time gates insertion to only new data.
+            cost_sum, _ = await self._get_last_stat_sum_and_time(cost_statistic_id)
+            consumption_sum, last_stats_time = await self._get_last_stat_sum_and_time(
+                consumption_statistic_id
+            )
+
+            for date in sorted(cost_reads):
                 day = cost_reads[date]
                 # Skip loading statistics that don't have a full days worth of data
                 # We will populate this day on the next pass
                 # HA displays errors in utility usage if partial day stats are added
                 if len(day) < 20:
                     continue
-                for time in day:
+                for time in sorted(day):
                     hour = day[time]
                     timestamp = hour.get("readDateTime")
                     naive_datetime = datetime.datetime.fromisoformat(timestamp)
-                    timezone = ZoneInfo("EST")
-                    start = naive_datetime.replace(tzinfo=timezone)
-                    if (
-                        last_stats_time is not None
-                        and start.timestamp() <= last_stats_time
-                    ):
+                    start = naive_datetime.replace(tzinfo=_TZ_LOCAL)
+
+                    if start.timestamp() <= last_stats_time:
                         continue
+
+                    hour_cost = hour.get("cost") or 0.0
+                    hour_usage = hour.get("utilityUsed") or 0.0
 
                     # If we are processing water and user has selected to include
                     # waste water, double count usage as KUB does. This is not
@@ -125,20 +162,19 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
                         is True
                     ):
-                        cost_sum += hour.get("cost")
-                        consumption_sum += hour.get("utilityUsed")
+                        cost_sum += hour_cost
+                        consumption_sum += hour_usage
 
-                    cost_sum += hour.get("cost")
-                    consumption_sum += hour.get("utilityUsed")
+                    cost_sum += hour_cost
+                    consumption_sum += hour_usage
 
                     cost_statistics.append(
-                        StatisticData(start=start, state=hour.get(
-                            "cost"), sum=cost_sum)
+                        StatisticData(start=start, state=hour_cost, sum=cost_sum)
                     )
                     consumption_statistics.append(
                         StatisticData(
                             start=start,
-                            state=hour.get("utilityUsed"),
+                            state=hour_usage,
                             sum=consumption_sum,
                         )
                     )
@@ -177,7 +213,9 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 unit_class=unit_class,
             )
 
-            async_import_statistics(self.hass, cost_metadata, cost_statistics)
-            async_import_statistics(
-                self.hass, consumption_metadata, consumption_statistics
-            )
+            if cost_statistics:
+                async_import_statistics(self.hass, cost_metadata, cost_statistics)
+            if consumption_statistics:
+                async_import_statistics(
+                    self.hass, consumption_metadata, consumption_statistics
+                )
