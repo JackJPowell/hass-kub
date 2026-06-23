@@ -1,4 +1,4 @@
-"""The hass-kub integration coordinator"""
+"""The KUB integration coordinator."""
 
 from __future__ import annotations
 
@@ -91,6 +91,10 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         records = stats.get(statistic_id)
         if not records:
+            _LOGGER.debug(
+                "No existing statistics found for %s; starting sum from 0",
+                statistic_id,
+            )
             return 0.0, 0
         record = records[0]
         last_sum = record.get("sum") or 0.0
@@ -101,6 +105,12 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             last_ts = start.timestamp()
         else:
             last_ts = float(start)
+        _LOGGER.debug(
+            "Last recorded stat for %s: sum=%.4f at %s",
+            statistic_id,
+            last_sum,
+            start,
+        )
         return last_sum, last_ts
 
     async def _insert_statistics(self) -> None:
@@ -109,7 +119,8 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Fetches the last recorded sum for each statistic before accumulating
         new data so that the running total is truly monotonically increasing
         across billing-period boundaries.  Only data points newer than the
-        most recently stored statistic are appended.
+        most recently stored statistic are appended, preventing the
+        zero-reset cliff that previously appeared on the Energy Dashboard.
         """
         for utility in self.data["usage"]:
             utility_data = self.data["usage"][utility]
@@ -131,6 +142,15 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cost_sum, _ = await self._get_last_stat_sum_and_time(cost_statistic_id)
             consumption_sum, last_stats_time = await self._get_last_stat_sum_and_time(
                 consumption_statistic_id
+            )
+            _LOGGER.debug(
+                "%s: seeded cost_sum=%.4f consumption_sum=%.4f last_stats_time=%s",
+                utility,
+                cost_sum,
+                consumption_sum,
+                datetime.datetime.fromtimestamp(last_stats_time, tz=_TZ_LOCAL)
+                if last_stats_time
+                else "none",
             )
 
             for date in sorted(cost_reads):
@@ -214,8 +234,19 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             if cost_statistics:
+                _LOGGER.debug(
+                    "%s: inserting %d cost and %d consumption stat entries",
+                    utility,
+                    len(cost_statistics),
+                    len(consumption_statistics),
+                )
                 async_import_statistics(self.hass, cost_metadata, cost_statistics)
             if consumption_statistics:
                 async_import_statistics(
                     self.hass, consumption_metadata, consumption_statistics
+                )
+            if not cost_statistics and not consumption_statistics:
+                _LOGGER.debug(
+                    "%s: no new stat entries to insert (all data already recorded)",
+                    utility,
                 )
