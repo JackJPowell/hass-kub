@@ -138,18 +138,26 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Seed running totals from the last recorded statistics so that
             # the cumulative sum never resets to zero at a billing-period
-            # boundary.  last_stats_time gates insertion to only new data.
-            cost_sum, _ = await self._get_last_stat_sum_and_time(cost_statistic_id)
-            consumption_sum, last_stats_time = await self._get_last_stat_sum_and_time(
-                consumption_statistic_id
+            # boundary. Each stat ID gates insertion from its own cursor.
+            cost_sum, cost_last_stats_time = await self._get_last_stat_sum_and_time(
+                cost_statistic_id
             )
+            (
+                consumption_sum,
+                consumption_last_stats_time,
+            ) = await self._get_last_stat_sum_and_time(consumption_statistic_id)
             _LOGGER.debug(
-                "%s: seeded cost_sum=%.4f consumption_sum=%.4f last_stats_time=%s",
+                "%s: seeded cost_sum=%.4f at %s consumption_sum=%.4f at %s",
                 utility,
                 cost_sum,
+                datetime.datetime.fromtimestamp(cost_last_stats_time, tz=_TZ_LOCAL)
+                if cost_last_stats_time
+                else "none",
                 consumption_sum,
-                datetime.datetime.fromtimestamp(last_stats_time, tz=_TZ_LOCAL)
-                if last_stats_time
+                datetime.datetime.fromtimestamp(
+                    consumption_last_stats_time, tz=_TZ_LOCAL
+                )
+                if consumption_last_stats_time
                 else "none",
             )
 
@@ -165,12 +173,12 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     timestamp = hour.get("readDateTime")
                     naive_datetime = datetime.datetime.fromisoformat(timestamp)
                     start = naive_datetime.replace(tzinfo=_TZ_LOCAL)
-
-                    if start.timestamp() <= last_stats_time:
-                        continue
+                    start_timestamp = start.timestamp()
 
                     hour_cost = hour.get("cost") or 0.0
                     hour_usage = hour.get("utilityUsed") or 0.0
+                    cost_increment = hour_cost
+                    consumption_increment = hour_usage
 
                     # If we are processing water and user has selected to include
                     # waste water, double count usage as KUB does. This is not
@@ -182,22 +190,24 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
                         is True
                     ):
-                        cost_sum += hour_cost
-                        consumption_sum += hour_usage
+                        cost_increment += hour_cost
+                        consumption_increment += hour_usage
 
-                    cost_sum += hour_cost
-                    consumption_sum += hour_usage
-
-                    cost_statistics.append(
-                        StatisticData(start=start, state=hour_cost, sum=cost_sum)
-                    )
-                    consumption_statistics.append(
-                        StatisticData(
-                            start=start,
-                            state=hour_usage,
-                            sum=consumption_sum,
+                    if start_timestamp > cost_last_stats_time:
+                        cost_sum += cost_increment
+                        cost_statistics.append(
+                            StatisticData(start=start, state=hour_cost, sum=cost_sum)
                         )
-                    )
+
+                    if start_timestamp > consumption_last_stats_time:
+                        consumption_sum += consumption_increment
+                        consumption_statistics.append(
+                            StatisticData(
+                                start=start,
+                                state=hour_usage,
+                                sum=consumption_sum,
+                            )
+                        )
 
             name_prefix = f"KUB {utility.capitalize()}"
             cost_metadata = StatisticMetaData(
