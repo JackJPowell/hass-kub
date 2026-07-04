@@ -8,6 +8,7 @@
   "homekit": {},
   "integration_type": "device",
   "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/JackJPowell/hass-kub/issues",
   "requirements": ["kub==0.6.5"],
   "ssdp": [],
   "version": "0.6.7"
