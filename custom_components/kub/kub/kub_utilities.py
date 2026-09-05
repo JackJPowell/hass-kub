@@ -3,6 +3,7 @@
 import base64
 import copy
 import hashlib
+import json
 import re
 import secrets
 from datetime import datetime, timedelta
@@ -105,21 +106,30 @@ class Http:
 
     async def fetch(self, url):
         """http get"""
-        assert self._session is not None
+        if self._session is None:
+            raise RuntimeError(
+                "Http session is not open. Use as an async context manager."
+            )
         resp = await self._session.get(url)
         resp.raise_for_status()
         return resp
 
     async def post(self, url, payload):
         """HTTP post (JSON body)"""
-        assert self._session is not None
+        if self._session is None:
+            raise RuntimeError(
+                "Http session is not open. Use as an async context manager."
+            )
         resp = await self._session.post(url, json=payload)
         resp.raise_for_status()
         return resp
 
     async def post_form(self, url, data: dict, headers: dict | None = None):
         """HTTP post (form-encoded body)"""
-        assert self._session is not None
+        if self._session is None:
+            raise RuntimeError(
+                "Http session is not open. Use as an async context manager."
+            )
         resp = await self._session.post(url, data=data, headers=headers or {})
         resp.raise_for_status()
         return resp
@@ -143,21 +153,19 @@ class KubUtility:
         # These are forwarded on all API requests instead of a Bearer header.
         self._session_cookies: dict[str, str] = {}
 
-        self.usage = {"electricity": {}, "gas": {},
-                      "water": {}, "wastewater": {}}
-        self.monthly_total = {
-            "electricity": {"usage": None, "cost": None},
-            "gas": {"usage": None, "cost": None},
-            "water": {"usage": None, "cost": None},
-            "wastewater": {"usage": None, "cost": None},
-        }
+        # These dictionaries are keyed by service point. For accounts with one
+        # meter of a utility the key remains the familiar utility name; accounts
+        # with multiple meters use ``<utility>_<service-point-id>``.
+        self.usage = {}
+        self.monthly_total = {}
         self.services = {}
         self.service_list = []
         self.http: Http | None = None
 
     @property
     def is_session_active(self) -> bool:
-        """Returns True when the session cookies / access token are still valid (with 60 s margin)."""
+        """Returns True when the session cookies / access token
+        are still valid (with 60 s margin)."""
         if not self._token_expires_at:
             return False
         if not self._session_cookies and not self._access_token:
@@ -172,10 +180,10 @@ class KubUtility:
         """Authenticate via Azure AD B2C and store session cookies from KUB's token proxy.
 
         The flow mirrors what the KUB Ember SPA does in a browser:
-          1. GET /oauth2/v2.0/authorize  – obtain session cookies + CSRF token
-          2. POST /SelfAsserted          – submit credentials
-          3. GET /api/.../confirmed      – exchange for an auth *code*
-          4. POST /api/auth/v1/oauth2/v2.0/token/customer  – KUB proxy exchanges code
+          1. GET /oauth2/v2.0/authorize  - obtain session cookies + CSRF token
+          2. POST /SelfAsserted          - submit credentials
+          3. GET /api/.../confirmed      - exchange for an auth *code*
+          4. POST /api/auth/v1/oauth2/v2.0/token/customer  - KUB proxy exchanges code
              for tokens and returns them via **Set-Cookie** (httpOnly).
 
         The KUB proxy's cookies (id_token, refresh_token, …) are then forwarded
@@ -194,7 +202,7 @@ class KubUtility:
             cookie_jar=aiohttp.DummyCookieJar(),
         ) as session:
             # ----------------------------------------------------------
-            # Step 1 – GET authorize page to seed cookies & CSRF token
+            # Step 1 - GET authorize page to seed cookies & CSRF token
             # ----------------------------------------------------------
             params = {
                 "client_id": _CLIENT_ID,
@@ -219,8 +227,7 @@ class KubUtility:
                     first = sc.split(";")[0].strip()
                     eq = first.find("=")
                     if eq != -1:
-                        session_cookies[first[:eq].strip()
-                                        ] = first[eq + 1:].strip()
+                        session_cookies[first[:eq].strip()] = first[eq + 1 :].strip()
 
             # Extract CSRF token and transaction ID from the page
             csrf_match = re.search(r'"csrf"\s*:\s*"([^"]+)"', html)
@@ -236,7 +243,7 @@ class KubUtility:
                 return "; ".join(f"{k}={v}" for k, v in cookies.items())
 
             # ----------------------------------------------------------
-            # Step 2 – POST credentials to SelfAsserted endpoint
+            # Step 2 - POST credentials to SelfAsserted endpoint
             # ----------------------------------------------------------
             self_asserted_params = {"tx": trans_id, "p": _POLICY}
             self_asserted_headers = {
@@ -264,8 +271,7 @@ class KubUtility:
                     first = sc.split(";")[0].strip()
                     eq = first.find("=")
                     if eq != -1:
-                        session_cookies[first[:eq].strip()
-                                        ] = first[eq + 1:].strip()
+                        session_cookies[first[:eq].strip()] = first[eq + 1 :].strip()
                 sa_text = await sa_resp.text()
                 if not sa_text or not sa_text.strip():
                     raise KUBAuthenticationError(
@@ -273,10 +279,9 @@ class KubUtility:
                         f"(HTTP {sa_resp.status}). The B2C policy or endpoint "
                         f"may have changed."
                     )
-                import json as _json
                 try:
-                    sa_json = _json.loads(sa_text)
-                except _json.JSONDecodeError as exc:
+                    sa_json = json.loads(sa_text)
+                except json.JSONDecodeError as exc:
                     raise KUBAuthenticationError(
                         f"SelfAsserted endpoint returned non-JSON "
                         f"(HTTP {sa_resp.status}): {sa_text[:200]}"
@@ -286,7 +291,7 @@ class KubUtility:
                     raise KUBAuthenticationError(error_msg)
 
             # ----------------------------------------------------------
-            # Step 3 – GET confirmed endpoint to receive the auth code
+            # Step 3 - GET confirmed endpoint to receive the auth code
             # ----------------------------------------------------------
             confirmed_params = {
                 "csrf_token": csrf_token,
@@ -312,14 +317,13 @@ class KubUtility:
             qs = parse_qs(parsed.query)
             auth_code = qs.get("code", [None])[0]
             if not auth_code:
-                error = qs.get("error_description",
-                               qs.get("error", ["Unknown"]))[0]
+                error = qs.get("error_description", qs.get("error", ["Unknown"]))[0]
                 raise KUBAuthenticationError(
                     f"Auth code not found in redirect. Error: {error}"
                 )
 
             # ----------------------------------------------------------
-            # Step 4 – Exchange auth code via KUB's token proxy
+            # Step 4 - Exchange auth code via KUB's token proxy
             # (not B2C directly — the proxy sets id_token as httpOnly cookie)
             # ----------------------------------------------------------
             token_data = {
@@ -356,8 +360,9 @@ class KubUtility:
                             )
                         token_json = await fb_resp.json()
                     # Store as Bearer token (fallback mode — may not work for AMI)
-                    self._access_token = token_json.get(
-                        "id_token") or token_json["access_token"]
+                    self._access_token = (
+                        token_json.get("id_token") or token_json["access_token"]
+                    )
                     self._refresh_token = token_json.get("refresh_token", "")
                     self._session_cookies = {}
                     # Fall through to the expires_in block below
@@ -370,28 +375,35 @@ class KubUtility:
                         first = sc.split(";")[0].strip()
                         eq = first.find("=")
                         if eq != -1:
-                            proxy_cookies[first[:eq].strip(
-                            )] = first[eq + 1:].strip()
+                            proxy_cookies[first[:eq].strip()] = first[eq + 1 :].strip()
 
                     token_json = await token_resp.json()
 
                     if proxy_cookies:
                         # Primary path: use proxy-issued cookies for all API calls
                         self._session_cookies = proxy_cookies
-                        self._access_token = token_json.get(
-                            "id_token", "") if token_json else ""
+                        self._access_token = (
+                            token_json.get("id_token", "") if token_json else ""
+                        )
                         self._refresh_token = ""  # refresh handled by proxy via cookies
                     else:
                         # Proxy returned JSON but no cookies — store token as Bearer
                         self._access_token = (token_json or {}).get("id_token") or (
-                            token_json or {}).get("access_token", "")
+                            token_json or {}
+                        ).get("access_token", "")
                         self._refresh_token = (token_json or {}).get(
-                            "refresh_token", "")
+                            "refresh_token", ""
+                        )
                         self._session_cookies = {}
 
-                    expires_in = int((token_json or {}).get(
-                        "expires_in", 3600)) if token_json else 3600
-                    self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
+                    expires_in = (
+                        int((token_json or {}).get("expires_in", 3600))
+                        if token_json
+                        else 3600
+                    )
+                    self._token_expires_at = datetime.now() + timedelta(
+                        seconds=expires_in
+                    )
                     self.session_start = datetime.now()
 
                     # Propagate new session state to any active Http instance
@@ -400,8 +412,7 @@ class KubUtility:
                         self.http.access_token = self._access_token
                     return
 
-        expires_in = int(token_json.get("expires_in", 3600)
-                         ) if token_json else 3600
+        expires_in = int(token_json.get("expires_in", 3600)) if token_json else 3600
         self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
         self.session_start = datetime.now()
 
@@ -416,7 +427,8 @@ class KubUtility:
             # Cookie-based refresh: send existing cookies (which contain the
             # httpOnly refresh_token). The proxy returns new cookies + JSON.
             cookie_header = "; ".join(
-                f"{k}={v}" for k, v in self._session_cookies.items())
+                f"{k}={v}" for k, v in self._session_cookies.items()
+            )
             token_data = {
                 "client_id": _CLIENT_ID,
                 "grant_type": "refresh_token",
@@ -444,14 +456,14 @@ class KubUtility:
                         first = sc.split(";")[0].strip()
                         eq = first.find("=")
                         if eq != -1:
-                            new_cookies[first[:eq].strip(
-                            )] = first[eq + 1:].strip()
+                            new_cookies[first[:eq].strip()] = first[eq + 1 :].strip()
                     token_json = await token_resp.json()
 
             if new_cookies:
                 self._session_cookies.update(new_cookies)
-            expires_in = int((token_json or {}).get(
-                "expires_in", 3600)) if token_json else 3600
+            expires_in = (
+                int((token_json or {}).get("expires_in", 3600)) if token_json else 3600
+            )
             self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
             if self.http is not None:
                 self.http.session_cookies = self._session_cookies
@@ -473,15 +485,13 @@ class KubUtility:
         ) as session:
             async with session.post(_TOKEN_URL, data=token_data) as token_resp:
                 if token_resp.status != 200:
-                    # Refresh token expired – fall back to full login
+                    # Refresh token expired - fall back to full login
                     await self._retrieve_access_token()
                     return
                 token_json = await token_resp.json()
 
-        self._access_token = token_json.get(
-            "id_token") or token_json["access_token"]
-        self._refresh_token = token_json.get(
-            "refresh_token", self._refresh_token)
+        self._access_token = token_json.get("id_token") or token_json["access_token"]
+        self._refresh_token = token_json.get("refresh_token", self._refresh_token)
         expires_in = int(token_json.get("expires_in", 3600))
         self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
@@ -498,46 +508,67 @@ class KubUtility:
 
     async def _retrieve_account_info(self):
         """Retrieve Account Info"""
-        assert self.http is not None
+        if self.http is None:
+            raise RuntimeError("No active HTTP session.")
         if not self.account_id:
             response = await self.http.fetch(
                 f"https://www.kub.org/api/auth/v1/users/{self.username}"
             )
-            json = await response.json()
-            self.person_id = json["person"][0]["id"]
-            self.account_id = json["person"][0]["accounts"][0]
+            data = await response.json()
+            self.person_id = data["person"][0]["id"]
+            self.account_id = data["person"][0]["accounts"][0]
         await self._retrieve_services()
 
     async def _retrieve_services(self):
-        assert self.http is not None
+        if self.http is None:
+            raise RuntimeError("No active HTTP session.")
         url = f"https://www.kub.org/api/cis/v1/accounts/{self.account_id}?include=all"
         response = await self.http.fetch(url)
-        json = await response.json()
-        self.services = json["service-point"]
+        data = await response.json()
+        self.services = data["service-point"]
 
+        service_points: list[tuple[str, str]] = []
         for service in self.services:
             match service["type"]:
                 case "E-RES":
-                    self.account["electricity"] = service["id"]
-                    self.service_list.append(KUBUtilityTypes.ELECTRICITY)
+                    service_points.append(("electricity", service["id"]))
                 case "G-RES":
-                    self.account["gas"] = service["id"]
-                    self.service_list.append(KUBUtilityTypes.GAS)
+                    service_points.append(("gas", service["id"]))
                 case "W/S-RES":
-                    self.account["water"] = service["id"]
-                    self.account["wastewater"] = service["id"]
-                    self.service_list.append(KUBUtilityTypes.WATER)
-                    self.service_list.append(KUBUtilityTypes.WASTEWATER)
+                    service_points.extend(
+                        (("water", service["id"]), ("wastewater", service["id"]))
+                    )
+                case "SO-RES":
+                    service_points.append(("wastewater", service["id"]))
                 case _:
                     raise ValueError(
                         f"An unexpected service type: {service['type']} (id: {service['id']})"
                     )
+
+        # Rebuild the account model on every service refresh so repeated calls
+        # cannot leave stale meters or duplicate service-list entries behind.
+        self.account = {}
+        self.service_list = []
+        utility_counts = {
+            utility: sum(1 for item_utility, _ in service_points if item_utility == utility)
+            for utility, _ in service_points
+        }
+        for utility, service_id in service_points:
+            service_key = (
+                utility if utility_counts[utility] == 1 else f"{utility}_{service_id}"
+            )
+            self.account[service_key] = {"id": service_id, "utility": utility}
+            self.service_list.append(service_key)
+            self.usage.setdefault(service_key, {})
+            self.monthly_total.setdefault(service_key, {"usage": None, "cost": None})
         return self.services
 
     async def retrieve_account_info(self):
         """Retrieves account info from KUB api"""
         await self._retrieve_access_token()
-        async with Http(self._access_token, session_cookies=self._session_cookies) as self.http:
+        async with Http(
+            self._access_token, session_cookies=self._session_cookies
+        ) as self.http:
             await self._retrieve_account_info()
         self.http = None
 
@@ -547,23 +578,18 @@ class KubUtility:
 
     async def _retrieve_usage(
         self,
-        utility_type,
-        start_date: str = datetime.today().strftime("%Y-%m-%d"),
-        end_date: str = datetime.today().strftime("%Y-%m-%d"),
+        service_key: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ):
-        utility = utility_type.name.lower()
-        account = self.account[utility]
-
-        # If we are processing wastewater so just copy water
-        # This does not account for separate meters for water and wastewater
-        # However, I do not know what the response looks like to process
-        # this case properly
-        if utility_type == KUBUtilityTypes.WASTEWATER:
-            water = KUBUtilityTypes.WATER.name.lower()
-            self.usage[utility] = copy.deepcopy(self.usage[water])
-            self.monthly_total[utility]["usage"] = self.monthly_total[water]["usage"]
-            self.monthly_total[utility]["cost"] = self.monthly_total[water]["cost"]
-            return self.usage
+        if start_date is None:
+            start_date = datetime.today().strftime("%Y-%m-%d")
+        if end_date is None:
+            end_date = datetime.today().strftime("%Y-%m-%d")
+        service = self.account[service_key]
+        utility = service["utility"]
+        utility_type = KUBUtilityTypes[utility.upper()]
+        account = service["id"]
 
         url = (
             f"https://www.kub.org/api/ami/v1/usage-values"
@@ -574,51 +600,52 @@ class KubUtility:
             f"&utilityType={utility_type.value}"
         )
 
-        assert self.http is not None
+        if self.http is None:
+            raise RuntimeError("No active HTTP session.")
         response = await self.http.fetch(url)
-        json = await response.json()
+        response_data = await response.json()
         total = 0.0
         total_cost = 0.0
         date = ""
         usage_data = {}
-        for idx, usage in enumerate(json["usage-value"]):
+        for idx, usage in enumerate(response_data["usage-value"]):
             if len(usage["usageValuesChildren"]) == 0:
                 # Pull data from the base object
                 usage_data["id"] = usage["id"]
                 usage_data["readDateTime"] = usage["readDateTime"]
 
                 # Grab the usage object via index
-                data = json["usage-aggregate"][idx]
+                agg = response_data["usage-aggregate"][idx]
 
                 # Read data from the usage object
-                usage_data["utilityUsed"] = data["readValue"]
-                usage_data["uom"] = data["uom"]
-                usage_data["cost"] = data["cost"]
+                usage_data["utilityUsed"] = agg["readValue"]
+                usage_data["uom"] = agg["uom"]
+                usage_data["cost"] = agg["cost"]
 
                 # Create another object with key of time
                 time = datetime.fromisoformat(usage["readDateTime"]).strftime(
                     "%H:%M:%S"
                 )
-                self.usage[utility][date][time] = {}
+                self.usage[service_key][date][time] = {}
 
                 # Apend all the data
-                self.usage[utility][date][time] = copy.deepcopy(usage_data)
+                self.usage[service_key][date][time] = copy.deepcopy(usage_data)
 
                 if (
                     datetime.fromisoformat(usage["readDateTime"]).month
                     == datetime.now().month
                 ):
-                    total = data["readValue"] + total
-                    total_cost = data["cost"] + total_cost
+                    total = agg["readValue"] + total
+                    total_cost = agg["cost"] + total_cost
             else:
                 # This is the aggregate case so create a new blank object in the list
                 date = datetime.fromisoformat(usage["readDateTime"]).strftime(
                     "%Y-%m-%d"
                 )
-                self.usage[utility][date] = {}
+                self.usage[service_key][date] = {}
 
-        self.monthly_total[utility]["usage"] = total
-        self.monthly_total[utility]["cost"] = total_cost
+        self.monthly_total[service_key]["usage"] = total
+        self.monthly_total[service_key]["cost"] = total_cost
         return self.usage
 
     async def retrieve_last_31_days(self):
@@ -627,12 +654,14 @@ class KubUtility:
         start_date = date.strftime("%Y-%m-%d")
 
         await self._ensure_token()
-        async with Http(self._access_token, session_cookies=self._session_cookies) as self.http:
+        async with Http(
+            self._access_token, session_cookies=self._session_cookies
+        ) as self.http:
             if not self.person_id:
                 await self._retrieve_account_info()
 
-            for service in self.service_list:
-                await self._retrieve_usage(service, start_date=start_date)
+            for service_key in self.service_list:
+                await self._retrieve_usage(service_key, start_date=start_date)
         self.http = None
         return self.usage
 
@@ -641,27 +670,35 @@ class KubUtility:
         start_date = datetime.today().replace(day=1).strftime("%Y-%m-%d")
 
         await self._ensure_token()
-        async with Http(self._access_token, session_cookies=self._session_cookies) as self.http:
+        async with Http(
+            self._access_token, session_cookies=self._session_cookies
+        ) as self.http:
             if not self.person_id:
                 await self._retrieve_account_info()
-            for service in self.service_list:
-                await self._retrieve_usage(service, start_date=start_date)
+            for service_key in self.service_list:
+                await self._retrieve_usage(service_key, start_date=start_date)
         self.http = None
         return self.usage
 
     async def retrieve_usage_by_range(
         self,
-        start_date: str = datetime.today().strftime("%Y-%m-%d"),
-        end_date: str = datetime.today().strftime("%Y-%m-%d"),
+        start_date: str | None = None,
+        end_date: str | None = None,
     ):
+        if start_date is None:
+            start_date = datetime.today().strftime("%Y-%m-%d")
+        if end_date is None:
+            end_date = datetime.today().strftime("%Y-%m-%d")
         """Retrieve usage for a custom date range"""
         await self._ensure_token()
-        async with Http(self._access_token, session_cookies=self._session_cookies) as self.http:
+        async with Http(
+            self._access_token, session_cookies=self._session_cookies
+        ) as self.http:
             if not self.person_id:
                 await self._retrieve_account_info()
-            for service in self.service_list:
+            for service_key in self.service_list:
                 await self._retrieve_usage(
-                    service, start_date=start_date, end_date=end_date
+                    service_key, start_date=start_date, end_date=end_date
                 )
         self.http = None
         return self.usage
@@ -671,21 +708,24 @@ class KubUtility:
         start_date = datetime.today().replace(day=1).strftime("%Y-%m-%d")
 
         await self._ensure_token()
-        async with Http(self._access_token, session_cookies=self._session_cookies) as self.http:
+        async with Http(
+            self._access_token, session_cookies=self._session_cookies
+        ) as self.http:
             if not self.person_id:
                 await self._retrieve_account_info()
-            for service in self.service_list:
-                await self._retrieve_usage(service, start_date=start_date)
+            for service_key in self.service_list:
+                await self._retrieve_usage(service_key, start_date=start_date)
         self.http = None
         return self.monthly_total
 
-    async def get_usage_by_datetime(self, usage_record: datetime = datetime.now()):
+    async def get_usage_by_datetime(self, usage_record: datetime | None = None):
         """Retrieve usage by datetime"""
+        if usage_record is None:
+            usage_record = datetime.now()
         await self.retrieve_monthly_usage()
         date_key = usage_record.replace(day=1).strftime("%Y-%m-%d")
         hour_key = usage_record.strftime("%H:00:00")
-        elec = (self.usage.get("electricity") or {}).get(
-            date_key, {}).get(hour_key)
+        elec = (self.usage.get("electricity") or {}).get(date_key, {}).get(hour_key)
         gas = (self.usage.get("gas") or {}).get(date_key, {}).get(hour_key)
         water = (self.usage.get("water") or {}).get(date_key, {}).get(hour_key)
         return elec, gas, water
@@ -693,7 +733,9 @@ class KubUtility:
     async def get_available_services(self):
         """Returns available services for account"""
         await self._ensure_token()
-        async with Http(self._access_token, session_cookies=self._session_cookies) as self.http:
+        async with Http(
+            self._access_token, session_cookies=self._session_cookies
+        ) as self.http:
             if not self.person_id:
                 await self._retrieve_account_info()
         self.http = None
