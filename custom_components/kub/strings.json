@@ -36,5 +36,11 @@
         "description": "[%key:common::config_flow::activities::description%]"
       }
     }
+  },
+  "issues": {
+    "authentication_error": {
+      "title": "KUB authentication failed",
+      "description": "Home Assistant could not sign in to your KUB account. Reconfigure the KUB integration and enter your current KUB username and password."
+    }
   }
 }

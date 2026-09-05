@@ -24,7 +24,11 @@ from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
-from .repairs import async_create_authentication_issue, async_delete_authentication_issue
+from .repairs import (
+    async_create_authentication_issue,
+    async_delete_authentication_issue,
+)
+from .helpers import get_service_utility
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,7 +130,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         zero-reset cliff that previously appeared on the Energy Dashboard.
         """
         for service_key, utility_data in self.data["usage"].items():
-            utility = self.account[service_key]["utility"]
+            utility = get_service_utility(self.account, service_key)
             # Existing single-meter accounts retain their statistic IDs;
             # service-point-qualified keys prevent multi-meter collisions.
             cost_statistic_id = f"sensor.kub_{service_key}_cost"

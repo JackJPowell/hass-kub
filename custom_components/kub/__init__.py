@@ -12,6 +12,10 @@ from kub import kub_utilities
 
 from .const import DOMAIN, KUB_API, KUB_COORDINATOR
 from .coordinator import KUBCoordinator
+from .repairs import (
+    async_create_authentication_issue,
+    async_delete_authentication_issue,
+)
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -29,6 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         kub = kub_utilities.KubUtility(username, password)
         await kub.retrieve_account_info()
     except kub_utilities.KUBAuthenticationError as error:
+        async_create_authentication_issue(hass, entry)
         raise ConfigEntryAuthFailed(error) from error
     except Exception as ex:
         raise ConfigEntryNotReady(ex) from ex
@@ -44,6 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await coordinator.async_config_entry_first_refresh()
+    async_delete_authentication_issue(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -52,6 +58,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        async_delete_authentication_issue(hass, entry)
 
     return unload_ok
 
