@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
+from .repairs import async_create_authentication_issue, async_delete_authentication_issue
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,8 +76,10 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Because KUB provides historical usage/cost with a delay of approximately one day
             # we need to insert data into statistics.
             await self._insert_statistics()
+            async_delete_authentication_issue(self.hass, self.config_entry)
             return self.data
         except kub_utilities.KUBAuthenticationError as error:
+            async_create_authentication_issue(self.hass, self.config_entry)
             raise ConfigEntryAuthFailed(error) from error
         except Exception as ex:
             raise UpdateFailed(
@@ -122,10 +125,12 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         most recently stored statistic are appended, preventing the
         zero-reset cliff that previously appeared on the Energy Dashboard.
         """
-        for utility in self.data["usage"]:
-            utility_data = self.data["usage"][utility]
-            cost_statistic_id = f"sensor.kub_{utility}_cost"
-            consumption_statistic_id = f"sensor.kub_{utility}_consumption"
+        for service_key, utility_data in self.data["usage"].items():
+            utility = self.account[service_key]["utility"]
+            # Existing single-meter accounts retain their statistic IDs;
+            # service-point-qualified keys prevent multi-meter collisions.
+            cost_statistic_id = f"sensor.kub_{service_key}_cost"
+            consumption_statistic_id = f"sensor.kub_{service_key}_consumption"
             _LOGGER.debug(
                 "Updating Statistics for %s and %s",
                 cost_statistic_id,
