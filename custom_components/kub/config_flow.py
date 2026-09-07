@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DOMAIN

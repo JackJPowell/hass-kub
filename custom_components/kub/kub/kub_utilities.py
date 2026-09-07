@@ -648,9 +648,9 @@ class KubUtility:
         self.monthly_total[service_key]["cost"] = total_cost
         return self.usage
 
-    async def retrieve_last_31_days(self):
-        """Retrieve all usage for the last 31 days"""
-        date = datetime.today() - timedelta(days=31)
+    async def retrieve_last_year(self):
+        """Retrieve the last year of usage for statistics reconciliation."""
+        date = datetime.today() - timedelta(days=365)
         start_date = date.strftime("%Y-%m-%d")
 
         await self._ensure_token()

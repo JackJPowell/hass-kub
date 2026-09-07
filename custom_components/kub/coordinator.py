@@ -8,27 +8,25 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant import config_entries
-from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.models import (StatisticData,
-                                                      StatisticMeanType,
-                                                      StatisticMetaData)
-from homeassistant.components.recorder.statistics import (
-    async_import_statistics,
-    get_last_statistics,
+from homeassistant.components.recorder.models import (
+    StatisticData,
+    StatisticMeanType,
+    StatisticMetaData,
 )
+from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
-                                                      UpdateFailed)
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
+from .helpers import get_service_utility
 from .repairs import (
     async_create_authentication_issue,
     async_delete_authentication_issue,
 )
-from .helpers import get_service_utility
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,12 +71,11 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Get the latest data from KUB."""
         try:
-            self.data["usage"] = await self.api.retrieve_last_31_days()
+            self.data["usage"] = await self.api.retrieve_last_year()
             self.data["monthly_total"] = self.api.monthly_total
             self.data["services"] = self.api.services
             self.data["service_list"] = self.api.service_list
-            # Because KUB provides historical usage/cost with a delay of approximately one day
-            # we need to insert data into statistics.
+            # KUB delays and revises recent hourly data; reconcile stable history.
             await self._insert_statistics()
             async_delete_authentication_issue(self.hass, self.config_entry)
             return self.data
@@ -86,137 +83,62 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             async_create_authentication_issue(self.hass, self.config_entry)
             raise ConfigEntryAuthFailed(error) from error
         except Exception as ex:
-            raise UpdateFailed(
-                f"Error communicating with the KUB api {ex}") from ex
-
-    async def _get_last_stat_sum_and_time(
-        self, statistic_id: str
-    ) -> tuple[float, float]:
-        """Return (last_sum, last_start_timestamp) for a statistic, or (0.0, 0) if none."""
-        stats = await get_instance(self.hass).async_add_executor_job(
-            get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
-        )
-        records = stats.get(statistic_id)
-        if not records:
-            _LOGGER.debug(
-                "No existing statistics found for %s; starting sum from 0",
-                statistic_id,
-            )
-            return 0.0, 0
-        record = records[0]
-        last_sum = record.get("sum") or 0.0
-        start = record.get("start")
-        if start is None:
-            last_ts = 0
-        elif hasattr(start, "timestamp"):
-            last_ts = start.timestamp()
-        else:
-            last_ts = float(start)
-        _LOGGER.debug(
-            "Last recorded stat for %s: sum=%.4f at %s",
-            statistic_id,
-            last_sum,
-            start,
-        )
-        return last_sum, last_ts
+            raise UpdateFailed(f"Error communicating with the KUB api {ex}") from ex
 
     async def _insert_statistics(self) -> None:
-        """Insert KUB statistics.
+        """Reconcile KUB's complete hourly data with recorder statistics.
 
-        Fetches the last recorded sum for each statistic before accumulating
-        new data so that the running total is truly monotonically increasing
-        across billing-period boundaries.  Only data points newer than the
-        most recently stored statistic are appended, preventing the
-        zero-reset cliff that previously appeared on the Energy Dashboard.
+        ``async_import_statistics`` updates an existing row when its statistic
+        id and start time match. Re-importing the stable portion of KUB's
+        history therefore corrects late revisions and fills holes without
+        creating duplicate rows. KUB data for today and yesterday is excluded
+        because it is routinely incomplete or revised.
         """
+        latest_complete_date = datetime.datetime.now(
+            _TZ_LOCAL
+        ).date() - datetime.timedelta(days=2)
+
         for service_key, utility_data in self.data["usage"].items():
             utility = get_service_utility(self.account, service_key)
-            # Existing single-meter accounts retain their statistic IDs;
-            # service-point-qualified keys prevent multi-meter collisions.
             cost_statistic_id = f"sensor.kub_{service_key}_cost"
             consumption_statistic_id = f"sensor.kub_{service_key}_consumption"
-            _LOGGER.debug(
-                "Updating Statistics for %s and %s",
-                cost_statistic_id,
-                consumption_statistic_id,
-            )
-
-            cost_reads = utility_data
             cost_statistics = []
             consumption_statistics = []
+            cost_sum = 0.0
+            consumption_sum = 0.0
 
-            # Seed running totals from the last recorded statistics so that
-            # the cumulative sum never resets to zero at a billing-period
-            # boundary. Each stat ID gates insertion from its own cursor.
-            cost_sum, cost_last_stats_time = await self._get_last_stat_sum_and_time(
-                cost_statistic_id
-            )
-            (
-                consumption_sum,
-                consumption_last_stats_time,
-            ) = await self._get_last_stat_sum_and_time(consumption_statistic_id)
-            _LOGGER.debug(
-                "%s: seeded cost_sum=%.4f at %s consumption_sum=%.4f at %s",
-                utility,
-                cost_sum,
-                datetime.datetime.fromtimestamp(cost_last_stats_time, tz=_TZ_LOCAL)
-                if cost_last_stats_time
-                else "none",
-                consumption_sum,
-                datetime.datetime.fromtimestamp(
-                    consumption_last_stats_time, tz=_TZ_LOCAL
-                )
-                if consumption_last_stats_time
-                else "none",
-            )
-
-            for date in sorted(cost_reads):
-                day = cost_reads[date]
-                # Skip loading statistics that don't have a full days worth of data
-                # We will populate this day on the next pass
-                # HA displays errors in utility usage if partial day stats are added
+            for date in sorted(utility_data):
+                if datetime.date.fromisoformat(date) > latest_complete_date:
+                    continue
+                day = utility_data[date]
                 if len(day) < 20:
                     continue
                 for time in sorted(day):
                     hour = day[time]
-                    timestamp = hour.get("readDateTime")
-                    naive_datetime = datetime.datetime.fromisoformat(timestamp)
-                    start = naive_datetime.replace(tzinfo=_TZ_LOCAL)
-                    start_timestamp = start.timestamp()
-
+                    start = datetime.datetime.fromisoformat(
+                        hour["readDateTime"]
+                    ).replace(tzinfo=_TZ_LOCAL)
                     hour_cost = hour.get("cost") or 0.0
                     hour_usage = hour.get("utilityUsed") or 0.0
-                    cost_increment = hour_cost
-                    consumption_increment = hour_usage
-
-                    # If we are processing water and user has selected to include
-                    # waste water, double count usage as KUB does. This is not
-                    # sufficient for residences with separate waste water meters.
-                    # Please help if this is you!
                     if (
-                        utility.lower()
-                        == kub_utilities.KUBUtilityTypes.WATER.name.lower()
+                        utility == kub_utilities.KUBUtilityTypes.WATER.name.lower()
                         and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
-                        is True
                     ):
-                        cost_increment += hour_cost
-                        consumption_increment += hour_usage
-
-                    if start_timestamp > cost_last_stats_time:
-                        cost_sum += cost_increment
-                        cost_statistics.append(
-                            StatisticData(start=start, state=hour_cost, sum=cost_sum)
+                        hour_cost *= 2
+                        hour_usage *= 2
+                    # A year is re-imported as one coherent series. This makes
+                    # existing rows for the same hour update atomically and
+                    # replaces prior bad cumulative sums with KUB-derived ones.
+                    cost_sum += hour_cost
+                    consumption_sum += hour_usage
+                    cost_statistics.append(
+                        StatisticData(start=start, state=hour_cost, sum=cost_sum)
+                    )
+                    consumption_statistics.append(
+                        StatisticData(
+                            start=start, state=hour_usage, sum=consumption_sum
                         )
-
-                    if start_timestamp > consumption_last_stats_time:
-                        consumption_sum += consumption_increment
-                        consumption_statistics.append(
-                            StatisticData(
-                                start=start,
-                                state=hour_usage,
-                                sum=consumption_sum,
-                            )
-                        )
+                    )
 
             name_prefix = f"KUB {utility.capitalize()}"
             cost_metadata = StatisticMetaData(
@@ -228,20 +150,15 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 unit_of_measurement="USD",
                 unit_class=None,
             )
-
-            if (
-                utility.lower()
-                == kub_utilities.KUBUtilityTypes.ELECTRICITY.name.lower()
-            ):
+            if utility == kub_utilities.KUBUtilityTypes.ELECTRICITY.name.lower():
                 unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
                 unit_class = "energy"
-            elif utility.lower() == kub_utilities.KUBUtilityTypes.GAS.name.lower():
+            elif utility == kub_utilities.KUBUtilityTypes.GAS.name.lower():
                 unit_of_measurement = UnitOfVolume.CENTUM_CUBIC_FEET
                 unit_class = "volume"
             else:
                 unit_of_measurement = UnitOfVolume.CUBIC_FEET
                 unit_class = "volume"
-
             consumption_metadata = StatisticMetaData(
                 mean_type=StatisticMeanType.NONE,
                 has_sum=True,
@@ -251,21 +168,9 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 unit_of_measurement=unit_of_measurement,
                 unit_class=unit_class,
             )
-
             if cost_statistics:
-                _LOGGER.debug(
-                    "%s: inserting %d cost and %d consumption stat entries",
-                    utility,
-                    len(cost_statistics),
-                    len(consumption_statistics),
-                )
                 async_import_statistics(self.hass, cost_metadata, cost_statistics)
             if consumption_statistics:
                 async_import_statistics(
                     self.hass, consumption_metadata, consumption_statistics
-                )
-            if not cost_statistics and not consumption_statistics:
-                _LOGGER.debug(
-                    "%s: no new stat entries to insert (all data already recorded)",
-                    utility,
                 )
