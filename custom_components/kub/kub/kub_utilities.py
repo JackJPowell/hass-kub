@@ -631,10 +631,15 @@ class KubUtility:
                 # Apend all the data
                 self.usage[service_key][date][time] = copy.deepcopy(usage_data)
 
-                if (
-                    datetime.fromisoformat(usage["readDateTime"]).month
-                    == datetime.now().month
-                ):
+                # readDateTime labels the END of the hour, so the interval belongs
+                # to the month of (label - 1h). The year matters because the usage
+                # window spans 12 months and would otherwise add the same month of
+                # the previous year.
+                interval = datetime.fromisoformat(usage["readDateTime"]) - timedelta(
+                    hours=1
+                )
+                now = datetime.now()
+                if (interval.year, interval.month) == (now.year, now.month):
                     total = agg["readValue"] + total
                     total_cost = agg["cost"] + total_cost
             else:
