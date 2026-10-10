@@ -4,6 +4,7 @@ import base64
 import copy
 import hashlib
 import json
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta
@@ -11,6 +12,8 @@ from enum import Enum
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
+
+_LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Azure AD B2C / OAuth constants
@@ -143,6 +146,10 @@ class KubUtility:
         self.password = password
         self.person_id = ""
         self.account_id = ""
+        # Every account on the login, in the order KUB returns them, and the
+        # person record that owns each one (usage queries need that person's id).
+        self.account_ids: list[str] = []
+        self.account_people: dict[str, str] = {}
 
         self.account = {}
         self.session_start: datetime | None = None
@@ -510,54 +517,82 @@ class KubUtility:
         """Retrieve Account Info"""
         if self.http is None:
             raise RuntimeError("No active HTTP session.")
-        if not self.account_id:
+        if not self.account_ids:
             response = await self.http.fetch(
                 f"https://www.kub.org/api/auth/v1/users/{self.username}"
             )
             data = await response.json()
+            self.account_people = {}
+            for person in data["person"]:
+                for account_id in person["accounts"]:
+                    self.account_people.setdefault(account_id, person["id"])
+            self.account_ids = list(self.account_people)
+            # Kept for callers that still expect a single account and person.
             self.person_id = data["person"][0]["id"]
-            self.account_id = data["person"][0]["accounts"][0]
+            self.account_id = self.account_ids[0]
         await self._retrieve_services()
 
     async def _retrieve_services(self):
         if self.http is None:
             raise RuntimeError("No active HTTP session.")
-        url = f"https://www.kub.org/api/cis/v1/accounts/{self.account_id}?include=all"
-        response = await self.http.fetch(url)
-        data = await response.json()
-        self.services = data["service-point"]
 
-        service_points: list[tuple[str, str]] = []
-        for service in self.services:
-            match service["type"]:
-                case "E-RES":
-                    service_points.append(("electricity", service["id"]))
-                case "G-RES":
-                    service_points.append(("gas", service["id"]))
-                case "W/S-RES":
-                    service_points.extend(
-                        (("water", service["id"]), ("wastewater", service["id"]))
-                    )
-                case "SO-RES":
-                    service_points.append(("wastewater", service["id"]))
-                case _:
-                    raise ValueError(
-                        f"An unexpected service type: {service['type']} (id: {service['id']})"
-                    )
+        self.services = []
+        # (utility, service point id, account id) in account order
+        service_points: list[tuple[str, str, str]] = []
+        for index, account_id in enumerate(self.account_ids):
+            url = f"https://www.kub.org/api/cis/v1/accounts/{account_id}?include=all"
+            try:
+                response = await self.http.fetch(url)
+                data = await response.json()
+            except aiohttp.ClientResponseError as err:
+                # The first account failing is fatal, as it always was. An extra
+                # account that cannot be read must not take down the others, but
+                # a lost login (401/403) always propagates.
+                if index == 0 or err.status in (401, 403):
+                    raise
+                _LOGGER.warning(
+                    "Skipping KUB account %s: HTTP %s", account_id, err.status
+                )
+                continue
+            for service in data["service-point"]:
+                self.services.append(service)
+                service_id = service["id"]
+                match service["type"]:
+                    case "E-RES":
+                        service_points.append(("electricity", service_id, account_id))
+                    case "G-RES":
+                        service_points.append(("gas", service_id, account_id))
+                    case "W/S-RES":
+                        service_points.append(("water", service_id, account_id))
+                        service_points.append(("wastewater", service_id, account_id))
+                    case "SO-RES":
+                        service_points.append(("wastewater", service_id, account_id))
+                    case _:
+                        # One unsupported service must not hide the others.
+                        _LOGGER.warning(
+                            "Ignoring unsupported KUB service type %s (id: %s)",
+                            service["type"],
+                            service_id,
+                        )
 
         # Rebuild the account model on every service refresh so repeated calls
         # cannot leave stale meters or duplicate service-list entries behind.
         self.account = {}
         self.service_list = []
         utility_counts = {
-            utility: sum(1 for item_utility, _ in service_points if item_utility == utility)
-            for utility, _ in service_points
+            utility: sum(1 for item, _, _ in service_points if item == utility)
+            for utility, _, _ in service_points
         }
-        for utility, service_id in service_points:
+        for utility, service_id, account_id in service_points:
             service_key = (
                 utility if utility_counts[utility] == 1 else f"{utility}_{service_id}"
             )
-            self.account[service_key] = {"id": service_id, "utility": utility}
+            self.account[service_key] = {
+                "id": service_id,
+                "utility": utility,
+                "account_id": account_id,
+                "person_id": self.account_people.get(account_id, self.person_id),
+            }
             self.service_list.append(service_key)
             self.usage.setdefault(service_key, {})
             self.monthly_total.setdefault(service_key, {"usage": None, "cost": None})
@@ -590,11 +625,12 @@ class KubUtility:
         utility = service["utility"]
         utility_type = KUBUtilityTypes[utility.upper()]
         account = service["id"]
+        person_id = service.get("person_id") or self.person_id
 
         url = (
             f"https://www.kub.org/api/ami/v1/usage-values"
             f"?endDate={end_date}"
-            f"&personId={self.person_id}"
+            f"&personId={person_id}"
             f"&servicePointId={account}"
             f"&startDate={start_date}"
             f"&utilityType={utility_type.value}"
