@@ -60,7 +60,11 @@ After the device is configured, the integration will expose 1 to 4 entities depe
 
 KUB only updates their api data once a day so this integration is set to only poll once every 12 hours. However, once new data is retrieved, hourly statistics will also be back-loaded to be displayed on your energy dashboard.
 
+Routine updates reconcile the last seven days, excluding today and yesterday while KUB finishes publishing them. The current month is also fetched to calculate the summary sensors, but older days are not repeatedly imported into statistics. After downtime, the window extends to catch up from the last stored statistics. A year of history is available through the library's explicit backfill method rather than being fetched on every poll. New statistics series start with the seven-day window.
+
 In the Energy dashboard, pick the statistics named `kub:<service>_consumption` and `kub:<service>_cost` (for example `kub:electricity_consumption`). They are external statistics in the integration's own namespace rather than entity statistics, so they cannot collide with the sensors and Home Assistant validates them without needing a matching entity. History that earlier versions stored under `sensor.kub_*` stays in the database but is no longer updated; point the Energy dashboard at the new statistics.
+
+When upgrading, existing `sensor.kub_*` statistics can still produce a "state class removed" repair warning even after switching to the new series. Home Assistant validates their stored metadata independently of whether this integration still writes to them. To remove the warning, first update the Energy dashboard and any statistics cards, then use **Developer Tools → Statistics** to remove the affected legacy statistics through Home Assistant's repair controls. Removing them deletes their old statistics history; retain or export any history you need before doing so. The integration does not automatically delete it.
 
 ## Options
 
