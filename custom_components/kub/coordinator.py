@@ -33,6 +33,7 @@ from .repairs import (
 _LOGGER = logging.getLogger(__name__)
 
 _TZ_LOCAL = ZoneInfo("America/New_York")
+_RECONCILIATION_DAYS = 7
 
 
 class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -73,12 +74,15 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Get the latest data from KUB."""
         try:
-            self.data["usage"] = await self.api.retrieve_last_year()
+            first_date = await self._async_reconciliation_start()
+            self.data["usage"] = await self.api.retrieve_recent_usage(
+                days=_RECONCILIATION_DAYS, start_date=first_date.isoformat()
+            )
             self.data["monthly_total"] = self.api.monthly_total
             self.data["services"] = self.api.services
             self.data["service_list"] = self.api.service_list
             # KUB delays and revises recent hourly data; reconcile stable history.
-            await self._insert_statistics()
+            await self._insert_statistics(first_date)
             async_delete_authentication_issue(self.hass, self.config_entry)
             return self.data
         except kub_utilities.KUBAuthenticationError as error:
@@ -87,32 +91,53 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as ex:
             raise UpdateFailed(f"Error communicating with the KUB api {ex}") from ex
 
+    async def _async_reconciliation_start(self) -> datetime.date:
+        """Use a week of overlap, extending it to catch up after downtime."""
+        first_date = datetime.datetime.now(_TZ_LOCAL).date() - datetime.timedelta(
+            days=_RECONCILIATION_DAYS
+        )
+        for service_key in self.api.service_list:
+            for suffix in ("consumption", "cost"):
+                statistic_id = f"{DOMAIN}:{service_key}_{suffix}"
+                stats = await get_instance(self.hass).async_add_executor_job(
+                    recorder_statistics.get_last_statistics,
+                    self.hass,
+                    1,
+                    statistic_id,
+                    False,
+                    {"sum"},
+                )
+                for row in stats.get(statistic_id, []):
+                    last_date = datetime.datetime.fromtimestamp(
+                        row["start"], _TZ_LOCAL
+                    ).date()
+                    first_date = min(first_date, last_date)
+        return first_date
+
     async def _async_sum_before(
         self, statistic_id: str, start: datetime.datetime
     ) -> float:
         """Return the stored cumulative sum of the last row before ``start``.
 
-        Each poll re-imports a sliding one-year window. Anchoring the new
+        Each poll re-imports a short overlapping window. Anchoring the new
         cumulative sums to the row just before that window keeps the series
         continuous as the window moves; restarting at zero each time leaves a
         negative step where the window begins.
         """
         stats = await get_instance(self.hass).async_add_executor_job(
-            recorder_statistics.statistics_during_period,
+            recorder_statistics.statistic_during_period,
             self.hass,
-            start - datetime.timedelta(days=3),
-            start,
-            {statistic_id},
-            "hour",
             None,
-            {"sum"},
+            start,
+            statistic_id,
+            {"change"},
+            None,
         )
-        for row in reversed(stats.get(statistic_id, [])):
-            if row.get("sum") is not None:
-                return row["sum"]
-        return 0.0
+        # With no lower bound, "change" is the latest sum before start minus
+        # zero. Recorder uses a LIMIT 1 query, even across long gaps.
+        return stats.get("change") or 0.0
 
-    async def _insert_statistics(self) -> None:
+    async def _insert_statistics(self, first_date: datetime.date) -> None:
         """Reconcile KUB's complete hourly data with recorder statistics.
 
         ``async_add_external_statistics`` updates an existing row when its statistic
@@ -134,10 +159,14 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cost_statistic_id = f"{DOMAIN}:{service_key}_cost"
             consumption_statistic_id = f"{DOMAIN}:{service_key}_consumption"
 
-            # A year is re-imported as one coherent series. This makes existing
-            # rows for the same hour update atomically and replaces prior bad
-            # cumulative sums with KUB-derived ones.
-            series = hourly_series(utility_data, _TZ_LOCAL, latest_complete_date)
+            # Fetching the current month keeps sensor totals accurate, but only
+            # the overlap (plus any downtime) needs statistics reconciliation.
+            recent_data = {
+                day: readings
+                for day, readings in utility_data.items()
+                if datetime.date.fromisoformat(day) >= first_date
+            }
+            series = hourly_series(recent_data, _TZ_LOCAL, latest_complete_date)
             multiplier = (
                 2.0
                 if utility == kub_utilities.KUBUtilityTypes.WATER.name.lower()
