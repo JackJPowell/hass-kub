@@ -8,6 +8,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant import config_entries
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder import statistics as recorder_statistics
 from homeassistant.components.recorder.models import (
     StatisticData,
     StatisticMeanType,
@@ -85,6 +87,31 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as ex:
             raise UpdateFailed(f"Error communicating with the KUB api {ex}") from ex
 
+    async def _async_sum_before(
+        self, statistic_id: str, start: datetime.datetime
+    ) -> float:
+        """Return the stored cumulative sum of the last row before ``start``.
+
+        Each poll re-imports a sliding one-year window. Anchoring the new
+        cumulative sums to the row just before that window keeps the series
+        continuous as the window moves; restarting at zero each time leaves a
+        negative step where the window begins.
+        """
+        stats = await get_instance(self.hass).async_add_executor_job(
+            recorder_statistics.statistics_during_period,
+            self.hass,
+            start - datetime.timedelta(days=3),
+            start,
+            {statistic_id},
+            "hour",
+            None,
+            {"sum"},
+        )
+        for row in reversed(stats.get(statistic_id, [])):
+            if row.get("sum") is not None:
+                return row["sum"]
+        return 0.0
+
     async def _insert_statistics(self) -> None:
         """Reconcile KUB's complete hourly data with recorder statistics.
 
@@ -117,7 +144,17 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
                 else 1.0
             )
-            consumption_rows, cost_rows = build_statistics(series, multiplier)
+            base_usage = base_cost = 0.0
+            if series:
+                base_usage = await self._async_sum_before(
+                    consumption_statistic_id, series[0][0]
+                )
+                base_cost = await self._async_sum_before(
+                    cost_statistic_id, series[0][0]
+                )
+            consumption_rows, cost_rows = build_statistics(
+                series, multiplier, base_usage, base_cost
+            )
             consumption_statistics = [
                 StatisticData(start=start, state=state, sum=total)
                 for start, state, total in consumption_rows

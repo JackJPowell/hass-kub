@@ -51,10 +51,18 @@ def hourly_series(
 
 
 def build_statistics(
-    series: list[tuple[datetime, float, float]], multiplier: float = 1.0
+    series: list[tuple[datetime, float, float]],
+    multiplier: float = 1.0,
+    base_usage: float = 0.0,
+    base_cost: float = 0.0,
 ) -> tuple[list[tuple[datetime, float, float]], list[tuple[datetime, float, float]]]:
-    """Return (consumption, cost) rows of (start, state, cumulative sum)."""
-    usage_sum = cost_sum = 0.0
+    """Return (consumption, cost) rows of (start, state, cumulative sum).
+
+    ``base_usage`` and ``base_cost`` are the stored cumulative sums of the hour just
+    before the first row, so a re-imported window continues the existing series
+    instead of restarting it at zero.
+    """
+    usage_sum, cost_sum = base_usage, base_cost
     consumption: list[tuple[datetime, float, float]] = []
     cost: list[tuple[datetime, float, float]] = []
     for start, usage, hour_cost in series:

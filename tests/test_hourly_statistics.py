@@ -129,3 +129,22 @@ def test_accumulating_in_key_order_is_what_broke_the_sums():
             old_rows.append((label, running))
     by_time = [total for _, total in sorted(old_rows)]
     assert any(b < a for a, b in zip(by_time, by_time[1:])), "old ordering should go backwards"
+
+
+def test_reimporting_a_later_window_continues_the_stored_sums():
+    """A window that starts later must chain from the stored sum, not restart at zero."""
+    series = helpers.hourly_series(three_days(), TZ, CUTOFF)
+    stored, _ = helpers.build_statistics(series)  # what the recorder holds after the first poll
+    k = 30  # the next poll's window starts 30 hours in
+    base = stored[k - 1][2]
+    window, _ = helpers.build_statistics(series[k:], base_usage=base)
+    assert window == stored[k:]  # identical to one continuous import
+
+
+def test_restarting_at_zero_leaves_a_step_at_the_window_edge():
+    """What happens without the anchor: the first new row drops below the stored sum."""
+    series = helpers.hourly_series(three_days(), TZ, CUTOFF)
+    stored, _ = helpers.build_statistics(series)
+    k = 30
+    restarted, _ = helpers.build_statistics(series[k:])  # base 0, as before
+    assert restarted[0][2] < stored[k - 1][2]
