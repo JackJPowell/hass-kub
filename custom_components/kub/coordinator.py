@@ -22,7 +22,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from kub import kub_utilities
 
 from .const import CONF_WATER_STATISTICS, DEVICE_SCAN_INTERVAL, DOMAIN
-from .helpers import get_service_utility
+from .helpers import build_statistics, get_service_utility, hourly_series
 from .repairs import (
     async_create_authentication_issue,
     async_delete_authentication_issue,
@@ -102,43 +102,26 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             utility = get_service_utility(self.account, service_key)
             cost_statistic_id = f"sensor.kub_{service_key}_cost"
             consumption_statistic_id = f"sensor.kub_{service_key}_consumption"
-            cost_statistics = []
-            consumption_statistics = []
-            cost_sum = 0.0
-            consumption_sum = 0.0
 
-            for date in sorted(utility_data):
-                if datetime.date.fromisoformat(date) > latest_complete_date:
-                    continue
-                day = utility_data[date]
-                if len(day) < 20:
-                    continue
-                for time in sorted(day):
-                    hour = day[time]
-                    start = datetime.datetime.fromisoformat(
-                        hour["readDateTime"]
-                    ).replace(tzinfo=_TZ_LOCAL)
-                    hour_cost = hour.get("cost") or 0.0
-                    hour_usage = hour.get("utilityUsed") or 0.0
-                    if (
-                        utility == kub_utilities.KUBUtilityTypes.WATER.name.lower()
-                        and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
-                    ):
-                        hour_cost *= 2
-                        hour_usage *= 2
-                    # A year is re-imported as one coherent series. This makes
-                    # existing rows for the same hour update atomically and
-                    # replaces prior bad cumulative sums with KUB-derived ones.
-                    cost_sum += hour_cost
-                    consumption_sum += hour_usage
-                    cost_statistics.append(
-                        StatisticData(start=start, state=hour_cost, sum=cost_sum)
-                    )
-                    consumption_statistics.append(
-                        StatisticData(
-                            start=start, state=hour_usage, sum=consumption_sum
-                        )
-                    )
+            # A year is re-imported as one coherent series. This makes existing
+            # rows for the same hour update atomically and replaces prior bad
+            # cumulative sums with KUB-derived ones.
+            series = hourly_series(utility_data, _TZ_LOCAL, latest_complete_date)
+            multiplier = (
+                2.0
+                if utility == kub_utilities.KUBUtilityTypes.WATER.name.lower()
+                and self.config_entry.options.get(CONF_WATER_STATISTICS, False)
+                else 1.0
+            )
+            consumption_rows, cost_rows = build_statistics(series, multiplier)
+            consumption_statistics = [
+                StatisticData(start=start, state=state, sum=total)
+                for start, state, total in consumption_rows
+            ]
+            cost_statistics = [
+                StatisticData(start=start, state=state, sum=total)
+                for start, state, total in cost_rows
+            ]
 
             name_prefix = f"KUB {utility.capitalize()}"
             cost_metadata = StatisticMetaData(
