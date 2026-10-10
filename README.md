@@ -60,6 +60,8 @@ After the device is configured, the integration will expose 1 to 4 entities depe
 
 KUB only updates their api data once a day so this integration is set to only poll once every 12 hours. However, once new data is retrieved, hourly statistics will also be back-loaded to be displayed on your energy dashboard.
 
+In the Energy dashboard, pick the statistics named `kub:<service>_consumption` and `kub:<service>_cost` (for example `kub:electricity_consumption`). They are external statistics in the integration's own namespace rather than entity statistics, so they cannot collide with the sensors and Home Assistant validates them without needing a matching entity. History that earlier versions stored under `sensor.kub_*` stays in the database but is no longer updated; point the Energy dashboard at the new statistics.
+
 ## Options
 
 Under the configure menu, you will find a single option to combine waste water usage and cost data into the water statistics. This is directed at those of us who only have a single point of water service and waste water is calculated via water consumption. This allows the statistics to better represent the total water cost for your residence. Even with this option enabled you will still have unique water and waste water summary sensors.

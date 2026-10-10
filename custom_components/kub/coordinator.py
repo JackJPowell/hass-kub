@@ -13,7 +13,7 @@ from homeassistant.components.recorder.models import (
     StatisticMeanType,
     StatisticMetaData,
 )
-from homeassistant.components.recorder.statistics import async_import_statistics
+from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -88,7 +88,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _insert_statistics(self) -> None:
         """Reconcile KUB's complete hourly data with recorder statistics.
 
-        ``async_import_statistics`` updates an existing row when its statistic
+        ``async_add_external_statistics`` updates an existing row when its statistic
         id and start time match. Re-importing the stable portion of KUB's
         history therefore corrects late revisions and fills holes without
         creating duplicate rows. KUB data for today and yesterday is excluded
@@ -100,8 +100,12 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         for service_key, utility_data in self.data["usage"].items():
             utility = get_service_utility(self.account, service_key)
-            cost_statistic_id = f"sensor.kub_{service_key}_cost"
-            consumption_statistic_id = f"sensor.kub_{service_key}_consumption"
+            # External statistics live in the integration's own namespace, so they
+            # can never collide with (or be mistaken for) a sensor entity's
+            # recorder statistics, and Home Assistant does not validate them as
+            # entities.
+            cost_statistic_id = f"{DOMAIN}:{service_key}_cost"
+            consumption_statistic_id = f"{DOMAIN}:{service_key}_consumption"
 
             # A year is re-imported as one coherent series. This makes existing
             # rows for the same hour update atomically and replaces prior bad
@@ -128,7 +132,7 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 mean_type=StatisticMeanType.NONE,
                 has_sum=True,
                 name=f"{name_prefix} Cost",
-                source="recorder",
+                source=DOMAIN,
                 statistic_id=cost_statistic_id,
                 unit_of_measurement="USD",
                 unit_class=None,
@@ -146,14 +150,14 @@ class KUBCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 mean_type=StatisticMeanType.NONE,
                 has_sum=True,
                 name=f"{name_prefix} Consumption",
-                source="recorder",
+                source=DOMAIN,
                 statistic_id=consumption_statistic_id,
                 unit_of_measurement=unit_of_measurement,
                 unit_class=unit_class,
             )
             if cost_statistics:
-                async_import_statistics(self.hass, cost_metadata, cost_statistics)
+                async_add_external_statistics(self.hass, cost_metadata, cost_statistics)
             if consumption_statistics:
-                async_import_statistics(
+                async_add_external_statistics(
                     self.hass, consumption_metadata, consumption_statistics
                 )
