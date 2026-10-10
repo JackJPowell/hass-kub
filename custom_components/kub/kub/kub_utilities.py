@@ -10,10 +10,12 @@ import secrets
 from datetime import datetime, timedelta
 from enum import Enum
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
+_TZ_LOCAL = ZoneInfo("America/New_York")
 
 # ---------------------------------------------------------------------------
 # Azure AD B2C / OAuth constants
@@ -160,9 +162,10 @@ class KubUtility:
         # These are forwarded on all API requests instead of a Bearer header.
         self._session_cookies: dict[str, str] = {}
 
-        # These dictionaries are keyed by service point. For accounts with one
-        # meter of a utility the key remains the familiar utility name; accounts
-        # with multiple meters use ``<utility>_<service-point-id>``.
+        # Preserve the keys the first account used before multi-account support:
+        # one meter of a utility keeps the utility name, multiple meters use ids.
+        # Other accounts always use ids so their availability cannot rename the
+        # first account's meters or claim an existing sensor's identity.
         self.usage = {}
         self.monthly_total = {}
         self.services = {}
@@ -527,9 +530,11 @@ class KubUtility:
                 for account_id in person["accounts"]:
                     self.account_people.setdefault(account_id, person["id"])
             self.account_ids = list(self.account_people)
+            if not self.account_ids:
+                raise ValueError("No KUB accounts found for this login")
             # Kept for callers that still expect a single account and person.
-            self.person_id = data["person"][0]["id"]
             self.account_id = self.account_ids[0]
+            self.person_id = self.account_people[self.account_id]
         await self._retrieve_services()
 
     async def _retrieve_services(self):
@@ -579,13 +584,21 @@ class KubUtility:
         # cannot leave stale meters or duplicate service-list entries behind.
         self.account = {}
         self.service_list = []
-        utility_counts = {
-            utility: sum(1 for item, _, _ in service_points if item == utility)
+        primary_account_id = self.account_ids[0]
+        primary_utility_counts = {
+            utility: sum(
+                1
+                for item, _, account_id in service_points
+                if item == utility and account_id == primary_account_id
+            )
             for utility, _, _ in service_points
         }
         for utility, service_id, account_id in service_points:
             service_key = (
-                utility if utility_counts[utility] == 1 else f"{utility}_{service_id}"
+                utility
+                if account_id == primary_account_id
+                and primary_utility_counts[utility] == 1
+                else f"{utility}_{service_id}"
             )
             self.account[service_key] = {
                 "id": service_id,
@@ -596,6 +609,10 @@ class KubUtility:
             self.service_list.append(service_key)
             self.usage.setdefault(service_key, {})
             self.monthly_total.setdefault(service_key, {"usage": None, "cost": None})
+        for cached in (self.usage, self.monthly_total):
+            for service_key in list(cached):
+                if service_key not in self.account:
+                    del cached[service_key]
         return self.services
 
     async def retrieve_account_info(self):
@@ -617,10 +634,11 @@ class KubUtility:
         start_date: str | None = None,
         end_date: str | None = None,
     ):
+        now = datetime.now(_TZ_LOCAL)
         if start_date is None:
-            start_date = datetime.today().strftime("%Y-%m-%d")
+            start_date = now.strftime("%Y-%m-%d")
         if end_date is None:
-            end_date = datetime.today().strftime("%Y-%m-%d")
+            end_date = now.strftime("%Y-%m-%d")
         service = self.account[service_key]
         utility = service["utility"]
         utility_type = KUBUtilityTypes[utility.upper()]
@@ -644,6 +662,7 @@ class KubUtility:
         total_cost = 0.0
         date = ""
         usage_data = {}
+        service_usage = {}
         for idx, usage in enumerate(response_data["usage-value"]):
             if len(usage["usageValuesChildren"]) == 0:
                 # Pull data from the base object
@@ -662,19 +681,15 @@ class KubUtility:
                 time = datetime.fromisoformat(usage["readDateTime"]).strftime(
                     "%H:%M:%S"
                 )
-                self.usage[service_key][date][time] = {}
-
                 # Apend all the data
-                self.usage[service_key][date][time] = copy.deepcopy(usage_data)
+                service_usage[date][time] = copy.deepcopy(usage_data)
 
                 # readDateTime labels the END of the hour, so the interval belongs
-                # to the month of (label - 1h). The year matters because the usage
-                # window spans 12 months and would otherwise add the same month of
-                # the previous year.
-                interval = datetime.fromisoformat(usage["readDateTime"]) - timedelta(
-                    hours=1
-                )
-                now = datetime.now()
+                # to the month of (label - 1h). Explicit backfills can span years.
+                label = datetime.fromisoformat(usage["readDateTime"])
+                if label.tzinfo is None:
+                    label = label.replace(tzinfo=_TZ_LOCAL)
+                interval = (label - timedelta(hours=1)).astimezone(_TZ_LOCAL)
                 if (interval.year, interval.month) == (now.year, now.month):
                     total = agg["readValue"] + total
                     total_cost = agg["cost"] + total_cost
@@ -683,15 +698,49 @@ class KubUtility:
                 date = datetime.fromisoformat(usage["readDateTime"]).strftime(
                     "%Y-%m-%d"
                 )
-                self.usage[service_key][date] = {}
+                service_usage[date] = {}
 
+        # Keep only the requested snapshot, rather than re-importing old cached
+        # days after the polling window has moved forward.
+        self.usage[service_key] = service_usage
         self.monthly_total[service_key]["usage"] = total
         self.monthly_total[service_key]["cost"] = total_cost
         return self.usage
 
+    async def retrieve_recent_usage(self, days: int = 7, start_date: str | None = None):
+        """Fetch recent revisions and the entire current month for sensor totals.
+
+        ``days`` is the overlap before today. ``start_date`` can extend it for
+        catch-up after downtime. Older history remains available through
+        ``retrieve_last_year`` and ``retrieve_usage_by_range``.
+        """
+        if days < 1:
+            raise ValueError("days must be at least 1")
+        today = datetime.now(_TZ_LOCAL).date()
+        first = min(today.replace(day=1), today - timedelta(days=days))
+        if start_date is not None:
+            first = min(first, datetime.fromisoformat(start_date).date())
+
+        await self._ensure_token()
+        try:
+            async with Http(
+                self._access_token, session_cookies=self._session_cookies
+            ) as self.http:
+                if not self.person_id:
+                    await self._retrieve_account_info()
+                for service_key in self.service_list:
+                    await self._retrieve_usage(
+                        service_key,
+                        start_date=first.isoformat(),
+                        end_date=today.isoformat(),
+                    )
+        finally:
+            self.http = None
+        return self.usage
+
     async def retrieve_last_year(self):
-        """Retrieve the last year of usage for statistics reconciliation."""
-        date = datetime.today() - timedelta(days=365)
+        """Explicitly fetch a year of history for backfills or repairs."""
+        date = datetime.now(_TZ_LOCAL) - timedelta(days=365)
         start_date = date.strftime("%Y-%m-%d")
 
         await self._ensure_token()
@@ -708,7 +757,7 @@ class KubUtility:
 
     async def retrieve_monthly_usage(self):
         """Retrieve all usage for the current month"""
-        start_date = datetime.today().replace(day=1).strftime("%Y-%m-%d")
+        start_date = datetime.now(_TZ_LOCAL).replace(day=1).strftime("%Y-%m-%d")
 
         await self._ensure_token()
         async with Http(
@@ -727,9 +776,9 @@ class KubUtility:
         end_date: str | None = None,
     ):
         if start_date is None:
-            start_date = datetime.today().strftime("%Y-%m-%d")
+            start_date = datetime.now(_TZ_LOCAL).strftime("%Y-%m-%d")
         if end_date is None:
-            end_date = datetime.today().strftime("%Y-%m-%d")
+            end_date = datetime.now(_TZ_LOCAL).strftime("%Y-%m-%d")
         """Retrieve usage for a custom date range"""
         await self._ensure_token()
         async with Http(
@@ -746,7 +795,7 @@ class KubUtility:
 
     async def retrieve_monthly_summary(self):
         """Retrieve summary of usage for the current month"""
-        start_date = datetime.today().replace(day=1).strftime("%Y-%m-%d")
+        start_date = datetime.now(_TZ_LOCAL).replace(day=1).strftime("%Y-%m-%d")
 
         await self._ensure_token()
         async with Http(

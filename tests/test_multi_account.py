@@ -1,22 +1,14 @@
 """Service discovery across several KUB accounts, with a faked HTTP layer.
 
-Run with: pip install pytest aiohttp && pytest tests
-The library module is loaded by path so Home Assistant does not need to be installed.
+Run with: pip install pytest kub==0.8.1 && pytest tests
+Exercise the published package used by Home Assistant.
 """
 
 import asyncio
-import importlib.util
-import sys
-from pathlib import Path
 
 import aiohttp
 import pytest
-
-_LIB = Path(__file__).parents[1] / "custom_components/kub/kub/kub_utilities.py"
-_spec = importlib.util.spec_from_file_location("kub_utilities", _LIB)
-ku = importlib.util.module_from_spec(_spec)
-sys.modules["kub_utilities"] = ku
-_spec.loader.exec_module(ku)
+from kub import kub_utilities as ku
 
 
 def service_point(service_id, service_type="E-RES"):
@@ -62,8 +54,8 @@ ACCOUNT_B = {"service-point": [service_point("SP-2"), service_point("SP-3")]}
 
 def test_every_account_is_read():
     api = load({"users/user": LOGIN, "accounts/ACCT-A": ACCOUNT_A, "accounts/ACCT-B": ACCOUNT_B})
-    assert api.service_list == ["electricity_SP-1", "electricity_SP-2", "electricity_SP-3"]
-    assert api.account["electricity_SP-1"]["account_id"] == "ACCT-A"
+    assert api.service_list == ["electricity", "electricity_SP-2", "electricity_SP-3"]
+    assert api.account["electricity"]["account_id"] == "ACCT-A"
     assert api.account["electricity_SP-3"]["account_id"] == "ACCT-B"
 
 
@@ -75,7 +67,7 @@ def test_each_service_keeps_the_person_that_owns_its_account():
         ]
     }
     api = load({"users/user": login, "accounts/ACCT-A": ACCOUNT_A, "accounts/ACCT-B": ACCOUNT_B})
-    assert api.account["electricity_SP-1"]["person_id"] == "P1"
+    assert api.account["electricity"]["person_id"] == "P1"
     assert api.account["electricity_SP-2"]["person_id"] == "P2"
 
 
@@ -131,3 +123,81 @@ def test_usage_request_uses_the_owning_persons_id():
     api.http = FakeHttp({"usage-values": {"usage-value": [], "usage-aggregate": []}})
     asyncio.run(api._retrieve_usage("electricity", start_date="2026-01-01"))
     assert "personId=P2" in api.http.urls[0] and "servicePointId=SP-1" in api.http.urls[0]
+
+
+def test_upgrade_preserves_the_first_accounts_existing_meter_key():
+    first_only = {"person": [{"id": "P1", "accounts": ["ACCT-A"]}]}
+    old = load({"users/user": first_only, "accounts/ACCT-A": ACCOUNT_A})
+    upgraded = load({"users/user": LOGIN, "accounts/ACCT-A": ACCOUNT_A, "accounts/ACCT-B": ACCOUNT_B})
+    assert old.account["electricity"]["id"] == upgraded.account["electricity"]["id"]
+    # Both sensor unique ids and external statistic ids are derived from this key.
+    assert upgraded.service_list[0] == old.service_list[0] == "electricity"
+
+
+def test_first_account_with_multiple_meters_keeps_existing_suffixed_keys():
+    first_only = {"person": [{"id": "P1", "accounts": ["ACCT-A"]}]}
+    first_meters = {"service-point": [service_point("SP-1"), service_point("SP-4")]}
+    old = load({"users/user": first_only, "accounts/ACCT-A": first_meters})
+    upgraded = load({"users/user": LOGIN, "accounts/ACCT-A": first_meters, "accounts/ACCT-B": ACCOUNT_B})
+    assert old.service_list == ["electricity_SP-1", "electricity_SP-4"]
+    assert upgraded.service_list[:2] == old.service_list
+
+
+def test_extra_account_failure_and_recovery_do_not_rename_primary_meter():
+    api = load({"users/user": LOGIN, "accounts/ACCT-A": ACCOUNT_A, "accounts/ACCT-B": ACCOUNT_B})
+    api.http.routes["accounts/ACCT-B"] = 500
+    asyncio.run(api._retrieve_services())
+    assert api.service_list == ["electricity"]
+    assert api.account["electricity"]["id"] == "SP-1"
+    api.http.routes["accounts/ACCT-B"] = ACCOUNT_B
+    asyncio.run(api._retrieve_services())
+    assert api.service_list == ["electricity", "electricity_SP-2", "electricity_SP-3"]
+
+
+def test_failed_extra_account_at_startup_does_not_rename_other_extra_meters():
+    login = {"person": [{"id": "P1", "accounts": ["ACCT-A", "ACCT-B", "ACCT-C"]}]}
+    routes = {
+        "users/user": login,
+        "accounts/ACCT-A": {"service-point": [service_point("SP-1", "G-RES")]},
+        "accounts/ACCT-B": {"service-point": [service_point("SP-2")]},
+        "accounts/ACCT-C": {"service-point": [service_point("SP-3")]},
+    }
+    healthy = load(routes)
+    failed = load({**routes, "accounts/ACCT-C": 500})
+    assert "electricity_SP-2" in healthy.account
+    assert "electricity_SP-2" in failed.account
+    assert "electricity" not in failed.account
+
+
+def test_extra_account_with_unique_utility_does_not_claim_legacy_key():
+    api = load({
+        "users/user": LOGIN,
+        "accounts/ACCT-A": ACCOUNT_A,
+        "accounts/ACCT-B": {"service-point": [service_point("SP-9", "G-RES")]},
+    })
+    assert api.service_list == ["electricity", "gas_SP-9"]
+
+
+def test_empty_login_has_a_clear_error():
+    with pytest.raises(ValueError, match="No KUB accounts found"):
+        load({"users/user": {"person": []}})
+
+
+def test_first_person_without_accounts_uses_the_actual_account_owner():
+    login = {"person": [
+        {"id": "P0", "accounts": []},
+        {"id": "P1", "accounts": ["ACCT-A"]},
+    ]}
+    api = load({"users/user": login, "accounts/ACCT-A": ACCOUNT_A})
+    assert api.person_id == "P1"
+    assert api.account["electricity"]["person_id"] == "P1"
+
+
+def test_refresh_removes_stale_meter_caches_and_retains_current_usage():
+    api = load({"users/user": LOGIN, "accounts/ACCT-A": ACCOUNT_A, "accounts/ACCT-B": ACCOUNT_B})
+    api.usage["electricity"] = {"2026-03-01": {}}
+    api.monthly_total["electricity"] = {"usage": 2.0, "cost": 0.2}
+    api.http.routes["accounts/ACCT-B"] = 404
+    asyncio.run(api._retrieve_services())
+    assert api.usage == {"electricity": {"2026-03-01": {}}}
+    assert api.monthly_total == {"electricity": {"usage": 2.0, "cost": 0.2}}
